@@ -4,19 +4,21 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 export class Config {
-  privateKey: string;
+  privateKey?: string;
 
-  constructor() {
-    // Attempt to load private key from .env first
-    const envPrivateKey = process.env.PRIVATE_KEY;
-
-    if (!envPrivateKey) {
-      throw new Error(
-        "No private key found! Either provide it via the environment variable 'PRIVATE_KEY' or pass it during initialization."
-      );
+  constructor(_privateKey?: string) {
+    // Attempt to load private key from arg first
+    if (_privateKey) {
+      this.privateKey = _privateKey;
+      return;
     }
 
-    this.privateKey = envPrivateKey;
+    // Attempt to load private key from arg first
+    const envPrivateKey = process.env.PRIVATE_KEY;
+
+    if (envPrivateKey) {
+      this.privateKey = envPrivateKey;
+    }
   }
 
   // Update private key from external input
