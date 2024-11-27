@@ -4,19 +4,32 @@
   "description": "",
   "type": "module",
   "main": "dist/index.js",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tsc"
+    "build": "rollup -c"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@rollup/plugin-commonjs": "^28.0.1",
+    "@rollup/plugin-node-resolve": "^15.3.0",
+    "@rollup/plugin-typescript": "^12.1.1",
     "@types/node": "^22.10.0",
+    "rollup": "^4.27.4",
     "typescript": "^5.7.2"
   },
   "dependencies": {
+    "@rollup/plugin-json": "^6.1.0",
+    "dotenv": "^16.4.5",
     "tslib": "^2.8.1"
   }
 }
