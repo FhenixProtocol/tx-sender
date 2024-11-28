@@ -1,4 +1,5 @@
 import { Config } from "./config";
+export { TransactionManager } from "./transactionManager";
 
 export const config = new Config();
 
