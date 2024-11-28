@@ -1,4 +1,4 @@
-import { Wallet, JsonRpcProvider, parseEther, parseUnits } from "ethers";
+import { Wallet, JsonRpcProvider, TransactionRequest, TransactionResponse } from "ethers";
 
 interface TransactionManagerConfig {
   privateKey: string;                // Ethereum private key
@@ -47,7 +47,7 @@ export class TransactionManager {
   /**
    * Prepares and signs a transaction.
    */
-  public async signTransaction(tx: Partial<Wallet.TransactionRequest>): Promise<string> {
+  public async signTransaction(tx: Partial<TransactionRequest>): Promise<string> {
     // Ensure the nonce is set
     const nonce = await this.getNonce();
     const transaction = { ...tx, nonce };
@@ -64,16 +64,16 @@ export class TransactionManager {
   /**
    * Broadcasts a signed transaction to the network.
    */
-  public async broadcastTransaction(signedTx: string): Promise<Wallet.TransactionResponse> {
-    return await this.provider.sendTransaction(signedTx);
+  public async broadcastTransaction(signedTx: string): Promise<TransactionResponse> {
+    return await this.provider.broadcastTransaction(signedTx);
   }
 
   /**
    * Sends a transaction: Signs and optionally broadcasts it.
    */
   public async sendTransaction(
-    tx: Partial<Wallet.TransactionRequest>
-  ): Promise<{ signedTx: string; txResponse?: Wallet.TransactionResponse }> {
+    tx: Partial<TransactionRequest>
+  ): Promise<{ signedTx: string; txResponse?: TransactionResponse }> {
     // Sign the transaction
     const signedTx = await this.signTransaction(tx);
 
