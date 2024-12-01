@@ -1,4 +1,5 @@
 import { Wallet, JsonRpcProvider, TransactionRequest, TransactionResponse } from "ethers";
+import { formatEther, parseEther } from "ethers";
 
 export interface ChainManagerConfig {
   privateKey: string;                // Ethereum private key
@@ -14,6 +15,7 @@ export class ChainManager {
   private nonceSyncing: Promise<number> | null = null;
   private broadcast: boolean;
   private chainId: number | undefined = undefined;
+  private balance: bigint = BigInt(0);
 
   constructor(config: ChainManagerConfig) {
     const { privateKey, rpcUrl, chainId, broadcast = false } = config;
@@ -26,17 +28,27 @@ export class ChainManager {
     this.wallet = new Wallet(privateKey, this.provider);
     this.broadcast = broadcast;
     this.chainId = chainId;
-    console.log("received chainId:", chainId);
 
-    console.log("nonce is null, getting nonce from provider");
+    // Fetch initial wallet balance
+    this.syncBalance().catch(err => {
+      console.error("Failed to fetch initial balance:", err);
+    });
   }
 
   /**
-   * Initializes the Nonce accoring to the chain state.
+   * Fetches and syncs the current wallet balance.
+   */
+  private async syncBalance(): Promise<void> {
+    const balance = await this.provider.getBalance(this.wallet.address);
+    this.balance = balance;
+    console.log(`Wallet balance synced: ${formatEther(this.balance)} ETH`);
+  }
+
+  /**
+   * Initializes the Nonce according to the chain state.
    */
   private async syncNonce(): Promise<void> {
     if (this.nonce === null) {
-      // console.log("nonce is null, syncing nonce from provider");
       this.nonceSyncing = this.provider.getTransactionCount(this.wallet.address, "pending");
       this.nonce = await this.nonceSyncing;
     }
@@ -96,12 +108,11 @@ export class ChainManager {
 
     // Sign the transaction
     const signedTx = await this.wallet.signTransaction(transaction);
-
     return signedTx;
   }
 
   /**
-   * Broadcasts a signed transaction to the network.
+   * Adds the chain ID to the transaction if not set.
    */
   private addChainId(tx: Partial<TransactionRequest>): void {
     if (tx.chainId === undefined) {
@@ -113,11 +124,35 @@ export class ChainManager {
   }
 
   /**
+   * Estimates the gas cost for a transaction and validates the wallet balance.
+   */
+  private async validateFunds(tx: Partial<TransactionRequest>): Promise<void> {
+    const gasEstimate = await this.provider.estimateGas(tx);
+    const gasPrice = (await this.provider.getFeeData()).gasPrice;
+    if (gasPrice === null) {
+      throw new Error("Failed to fetch gas price.");
+    }
+    const cost = gasEstimate * gasPrice;
+
+    console.log(`Estimated Gas: ${gasEstimate}, Gas Price: ${formatEther(gasPrice)} ETH`);
+    console.log(`Estimated Cost: ${formatEther(cost)} ETH`);
+
+    if (cost > this.balance) {
+      throw new Error("Insufficient funds for transaction.");
+    }
+
+    if (this.balance - cost < parseEther("0.1")) {
+      console.warn("Warning: Wallet funds are running low, balance:", this.balance);
+      console.warn("balance after tx:", this.balance - cost);
+    }
+  }
+
+  /**
    * Broadcasts a signed transaction to the network.
    */
-  public async broadcastTransaction(signedTx: string): Promise<TransactionResponse> {
-    return await this.provider.broadcastTransaction(signedTx);
-  }
+   public async broadcastTransaction(signedTx: string): Promise<TransactionResponse> {
+     return this.provider.broadcastTransaction(signedTx);
+   }
 
   /**
    * Sends a transaction: Signs and optionally broadcasts it.
@@ -125,12 +160,19 @@ export class ChainManager {
   public async sendTransaction(
     tx: Partial<TransactionRequest>
   ): Promise<{ signedTx: string; txResponse?: TransactionResponse }> {
+    this.addChainId(tx);
+
+    // Validate balance and estimate gas
+    await this.validateFunds(tx);
+
     // Sign the transaction
     const signedTx = await this.signTransaction(tx);
 
     // Broadcast the transaction if specified
     if (this.broadcast) {
       const txResponse = await this.broadcastTransaction(signedTx);
+      // Sync balance after broadcast
+      await this.syncBalance();
       return { signedTx, txResponse };
     }
 
