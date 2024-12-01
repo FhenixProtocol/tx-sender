@@ -13,6 +13,7 @@ export class ChainManager {
   private nonce: number | null = null;
   private nonceSyncing: Promise<number> | null = null;
   private broadcast: boolean;
+  private chainId: number | undefined = undefined;
 
   constructor(config: ChainManagerConfig) {
     const { privateKey, rpcUrl, chainId, broadcast = false } = config;
@@ -24,6 +25,8 @@ export class ChainManager {
     this.provider = new JsonRpcProvider(rpcUrl, chainId);
     this.wallet = new Wallet(privateKey, this.provider);
     this.broadcast = broadcast;
+    this.chainId = chainId;
+    console.log("received chainId:", chainId);
 
     console.log("nonce is null, getting nonce from provider");
   }
@@ -78,6 +81,8 @@ export class ChainManager {
    * Prepares and signs a transaction.
    */
   public async signTransaction(tx: Partial<TransactionRequest>): Promise<string> {
+    this.addChainId(tx);
+
     // Ensure the nonce is set
     await this.getNonce();
 
@@ -85,14 +90,26 @@ export class ChainManager {
     const nonce = this.nonce
     console.log("signing transaction with nonce", nonce);
     const transaction = { ...tx, nonce };
+
+    // Increment nonce for the next transaction
     this.incrementNonce();
 
     // Sign the transaction
     const signedTx = await this.wallet.signTransaction(transaction);
 
-    // Increment nonce for the next transaction
-
     return signedTx;
+  }
+
+  /**
+   * Broadcasts a signed transaction to the network.
+   */
+  private addChainId(tx: Partial<TransactionRequest>): void {
+    if (tx.chainId === undefined) {
+      tx.chainId = this.chainId;
+    }
+    if (tx.chainId === undefined) {
+      throw Error("chainId is required");
+    }
   }
 
   /**
@@ -108,10 +125,6 @@ export class ChainManager {
   public async sendTransaction(
     tx: Partial<TransactionRequest>
   ): Promise<{ signedTx: string; txResponse?: TransactionResponse }> {
-    // if (tx.chainId === undefined) {
-    //   tx.chainId = this.provider._network.chainId;
-    tx.chainId = 420105;
-    // }
     // Sign the transaction
     const signedTx = await this.signTransaction(tx);
 

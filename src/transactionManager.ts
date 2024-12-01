@@ -51,12 +51,6 @@ export class TransactionManager {
     tx: Partial<TransactionRequest>,
     chain?: string
   ): Promise<{ signedTx: string; txResponse?: TransactionResponse }> {
-    // todo - check there is a chain to tx
-    // if (tx.chainId === undefined) {
-    //   tx.chainId = this.provider._network.chainId;
-    tx.chainId = 420105;
-    // }
-
     let chainManager = this.getChainManager(chain);
 
     // Sign the transaction
