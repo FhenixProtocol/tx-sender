@@ -41,7 +41,7 @@ export class ChainManager {
   private async syncBalance(): Promise<void> {
     const balance = await this.provider.getBalance(this.wallet.address);
     this.balance = balance;
-    console.log(`Wallet balance synced: ${formatEther(this.balance)} ETH`);
+    // console.log(`Wallet balance synced: ${formatEther(this.balance)} ETH`);
   }
 
   /**
@@ -70,7 +70,7 @@ export class ChainManager {
    * Increments the nonce after a transaction.
    */
   private incrementNonce(): void {
-    console.log("incrementing nonce");
+    // console.log("incrementing nonce");
     if (this.nonce !== null) {
       this.nonce += 1;
     } else if (this.nonceSyncing === null) {
@@ -86,7 +86,7 @@ export class ChainManager {
       });
     }
 
-    console.log("nonce:", this.nonce);
+    // console.log("nonce:", this.nonce);
   }
 
   /**
@@ -100,7 +100,7 @@ export class ChainManager {
 
     // use latest nonce
     const nonce = this.nonce
-    console.log("signing transaction with nonce", nonce);
+    // console.log("signing transaction with nonce", nonce);
     const transaction = { ...tx, nonce };
 
     // Increment nonce for the next transaction
@@ -132,7 +132,7 @@ export class ChainManager {
       // Using current balance as limit for estimation
       gasEstimate = await this.provider.estimateGas({...tx, gasLimit: this.balance});
     } else {
-      console.log("using given gaslimit for estimation:", tx.gasLimit);
+      // console.log("using given gaslimit for estimation:", tx.gasLimit);
       gasEstimate = await this.provider.estimateGas(tx);
     }
 
@@ -142,8 +142,8 @@ export class ChainManager {
     }
     const cost = gasEstimate * gasPrice;
 
-    console.log(`Estimated Gas: ${gasEstimate}, Gas Price: ${formatEther(gasPrice)} ETH`);
-    console.log(`Estimated Cost: ${formatEther(cost)} ETH`);
+    // console.log(`Estimated Gas: ${gasEstimate}, Gas Price: ${formatEther(gasPrice)} ETH`);
+    // console.log(`Estimated Cost: ${formatEther(cost)} ETH`);
 
     if (tx.gasLimit === undefined) {
       tx.gasLimit = gasEstimate;
