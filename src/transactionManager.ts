@@ -1,5 +1,6 @@
 import { TransactionRequest, TransactionResponse } from "ethers";
 import { ChainManagerConfig, ChainManager } from "./chainManager";
+import { loadEnv } from "./utils";
 
 interface TransactionManagerConfig {
   broadcast?: boolean;                    // Whether to automatically broadcast transactions
@@ -8,6 +9,17 @@ interface TransactionManagerConfig {
     [chainName: string]: ChainManagerConfig
   };
 }
+
+export interface ChainManagerConfigPublic extends Omit<ChainManagerConfig, 'private_key'> {
+  private_key?: string;
+}
+
+interface TransactionManagerConfigPublic extends TransactionManagerConfig { // Same but without private keys for each chain
+  chains: {
+    [chainName: string]: ChainManagerConfigPublic
+  };
+}
+
 
 export class TransactionManager {
   private broadcast: boolean;
@@ -25,6 +37,27 @@ export class TransactionManager {
     for (const [chainName, config] of Object.entries(chains)) {
       this.chainManagers.set(chainName, new ChainManager(config));
     }
+  }
+
+  static fromDotEnv(config: TransactionManagerConfigPublic) {
+    loadEnv();
+
+    // complete chain configurations from env
+    for (const [chainName, chainConfig] of Object.entries(config.chains)) {
+      if (chainConfig.private_key === undefined) {
+        const envVariableName = `${chainName.toUpperCase()}_PRIVATE_KEY`;
+        if (!process.env[envVariableName]) {
+          throw new Error(
+            `No private key found for chain "${chainName}, ` +
+            `neither as part of the config, or as the env variable ${envVariableName}".`
+          );
+        }
+
+        chainConfig.private_key = process.env[envVariableName];
+      }
+    }
+
+    return new TransactionManager(config);
   }
 
   /**

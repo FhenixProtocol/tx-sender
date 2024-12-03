@@ -2,10 +2,10 @@ import { Wallet, JsonRpcProvider, TransactionRequest, TransactionResponse } from
 import { formatEther, parseEther } from "ethers";
 
 export interface ChainManagerConfig {
-  privateKey: string;                // Ethereum private key
   rpcUrl: string;                    // Ethereum RPC URL
   chainId?: number;                  // Optional chain ID for Ethereum
   broadcast?: boolean;               // Whether to automatically broadcast transactions
+  privateKey: string;                // Ethereum private key
 }
 
 export class ChainManager {
