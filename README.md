@@ -77,5 +77,34 @@ await Promise.all(promises);
 
 Contract interaction example
 ```typescript
+import { ethers } from "ethers";
 
+const CONTRACT_ADDRESS = "0xD050A6c223E999714bE8ce936E68570a3D684562";
+
+// ABI: Replace this with your contract's actual ABI
+const ABI = [
+  {
+    "inputs": [{
+      "internalType": "uint64",
+      "name": "newCounter",
+      "type": "uint64"
+    }],
+    "name": "setPubCounter",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+];
+
+// Create the contract object (no provider or signer needed)
+const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI);
+
+// Call `getTransaction` for the function to prepare a transaction
+const tx = await contract.setPubCounter.populateTransaction(42);
+
+// optional, these will be populated automatically if not provided:
+tx.gasLimit = 42000;
+tx.gasPrice = parseUnits("20", "gwei");
+
+await txManager.sendTransaction(tx, "ethereum");
 ```

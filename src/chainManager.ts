@@ -127,7 +127,15 @@ export class ChainManager {
    * Estimates the gas cost for a transaction and validates the wallet balance.
    */
   private async validateFunds(tx: Partial<TransactionRequest>): Promise<void> {
-    const gasEstimate = await this.provider.estimateGas(tx);
+    let gasEstimate;
+    if (tx.gasLimit === undefined) {
+      // Using current balance as limit for estimation
+      gasEstimate = await this.provider.estimateGas({...tx, gasLimit: this.balance});
+    } else {
+      console.log("using given gaslimit for estimation:", tx.gasLimit);
+      gasEstimate = await this.provider.estimateGas(tx);
+    }
+
     const gasPrice = (await this.provider.getFeeData()).gasPrice;
     if (gasPrice === null) {
       throw new Error("Failed to fetch gas price.");
