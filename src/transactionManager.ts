@@ -10,11 +10,11 @@ interface TransactionManagerConfig {
   };
 }
 
-export interface ChainManagerConfigPublic extends Omit<ChainManagerConfig, 'private_key'> {
-  private_key?: string;
+export interface ChainManagerConfigPublic extends Omit<ChainManagerConfig, 'privateKey'> {
+  privateKey?: string;
 }
 
-interface TransactionManagerConfigPublic extends TransactionManagerConfig { // Same but without private keys for each chain
+interface TransactionManagerConfigPublic extends Omit<TransactionManagerConfig , 'chains'> { // Same but without private keys for each chain
   chains: {
     [chainName: string]: ChainManagerConfigPublic
   };
@@ -44,7 +44,7 @@ export class TransactionManager {
 
     // complete chain configurations from env
     for (const [chainName, chainConfig] of Object.entries(config.chains)) {
-      if (chainConfig.private_key === undefined) {
+      if (chainConfig.privateKey === undefined) {
         const envVariableName = `${chainName.toUpperCase()}_PRIVATE_KEY`;
         if (!process.env[envVariableName]) {
           throw new Error(
@@ -53,11 +53,11 @@ export class TransactionManager {
           );
         }
 
-        chainConfig.private_key = process.env[envVariableName];
+        chainConfig.privateKey = process.env[envVariableName];
       }
     }
 
-    return new TransactionManager(config);
+    return new TransactionManager(config as TransactionManagerConfig);
   }
 
   /**
