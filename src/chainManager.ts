@@ -1,5 +1,5 @@
 import { Wallet, JsonRpcProvider, TransactionRequest, TransactionResponse } from "ethers";
-import { formatEther, parseEther } from "ethers";
+import { formatEther, parseEther, getBigInt } from "ethers";
 
 export interface ChainManagerConfig {
   rpcUrl: string;                    // Ethereum RPC URL
@@ -136,6 +136,21 @@ export class ChainManager {
 
     console.log(`Estimated Gas: ${gasEstimate}, Gas Price: ${formatEther(gasPrice)} ETH`);
     console.log(`Estimated Cost: ${formatEther(cost)} ETH`);
+
+    if (tx.gasLimit === undefined) {
+      tx.gasLimit = gasEstimate;
+    } else if (getBigInt(tx.gasLimit!) < gasEstimate) {
+      console.error("Gas limit is too low for transaction,", tx.gasLimit, "<", gasEstimate);
+      throw new Error("Gas limit is too low for transaction.", );
+    } else if (getBigInt(tx.gasLimit!) > gasEstimate) {
+      console.warn("Warning: Gas limit is higher than estimated,", tx.gasLimit, ">", gasEstimate);
+    }
+
+    if (tx.gasPrice === undefined) {
+      tx.gasPrice = gasPrice;
+    } else if (getBigInt(tx.gasLimit!) < gasPrice) {
+      console.warn("Warning: Gas price is lower than recommended.", tx.gasPrice, "<", gasPrice);
+    }
 
     if (cost > this.balance) {
       throw new Error("Insufficient funds for transaction.");

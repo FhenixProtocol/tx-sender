@@ -35,6 +35,9 @@ export class TransactionManager {
 
     // Initialize chain configurations
     for (const [chainName, config] of Object.entries(chains)) {
+      if (config.broadcast === undefined) {
+        config.broadcast = broadcast
+      }
       this.chainManagers.set(chainName, new ChainManager(config));
     }
   }
@@ -86,16 +89,7 @@ export class TransactionManager {
   ): Promise<{ signedTx: string; txResponse?: TransactionResponse }> {
     let chainManager = this.getChainManager(chain);
 
-    // Sign the transaction
-    const signedTx = await chainManager.signTransaction(tx);
-
-    // Broadcast the transaction if specified
-    if (this.broadcast) {
-      const txResponse = await chainManager.broadcastTransaction(signedTx);
-      return { signedTx, txResponse };
-    }
-
-    return { signedTx };
+    return chainManager.sendTransaction(tx);
   }
 
   public setDefaultChain(chain: string): void {
