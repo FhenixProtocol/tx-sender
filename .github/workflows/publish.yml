@@ -31,7 +31,6 @@ jobs:
             echo "PRERELEASE=" >> $GITHUB_ENV
           fi
 
-      # Temporarily disable building before publish
-      # - run: pnpm install
-      # - run: pnpm build:prod
+      - run: pnpm install
+      - run: pnpm build
       - run: pnpm publish --no-git-checks ${{ env.PRERELEASE }}
