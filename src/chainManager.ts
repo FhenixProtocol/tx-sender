@@ -161,7 +161,7 @@ export class ChainManager {
     }
 
     if (cost > this.balance) {
-      throw new Error("Insufficient funds for transaction.");
+      throw new Error(`Insufficient funds for transaction. Account ${this.wallet.address}'s balance:`, this.balance, "wanted:", cost);
     }
 
     if (this.balance - cost < parseEther("0.1")) {
