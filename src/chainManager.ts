@@ -23,7 +23,6 @@ export class ChainManager {
     if (!privateKey || !rpcUrl) {
       throw new Error("Private key and RPC URL are required.");
     }
-
     this.provider = new JsonRpcProvider(rpcUrl, chainId);
     this.wallet = new Wallet(privateKey, this.provider);
     this.broadcast = broadcast;
@@ -161,7 +160,7 @@ export class ChainManager {
     }
 
     if (cost > this.balance) {
-      throw new Error(`Insufficient funds for transaction. Account ${this.wallet.address}'s balance:`, this.balance, "wanted:", cost);
+      throw new Error(`Insufficient funds for transaction. Account ${this.wallet.address}'s balance:, ${this.balance}, wanted: , ${cost}`);
     }
 
     if (this.balance - cost < parseEther("0.1")) {
