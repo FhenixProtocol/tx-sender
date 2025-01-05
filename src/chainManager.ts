@@ -129,7 +129,7 @@ export class ChainManager {
     let gasEstimate;
     if (tx.gasLimit === undefined) {
       // Using current balance as limit for estimation
-      gasEstimate = (await this.provider.estimateGas(tx)) * BigInt(11) / BigInt(10); // 10% buffer
+      gasEstimate = (await this.provider.estimateGas(tx)) * 11n / 10n; // 10% buffer
     } else {
       // console.log("using given gaslimit for estimation:", tx.gasLimit);
       gasEstimate = await this.provider.estimateGas(tx);
