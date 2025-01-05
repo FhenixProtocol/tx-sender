@@ -129,9 +129,14 @@ export class ChainManager {
     let gasEstimate;
     if (tx.gasLimit === undefined) {
       // Using current balance as limit for estimation
-      gasEstimate = (await this.provider.estimateGas(tx)) * 11n / 10n; // 10% buffer
+      const txWithLimit = { ...tx, gasLimit: 1_000_000 };
+      console.log("The gas limit is undefined, using current 1Mil as limit for estimation:", txWithLimit.gasLimit);
+      // Since the gas is being estimated, with binary search, we can use a relative low gas limit 
+      // to avoid wasting gas on the estimation itself
+      // In the worst case, the gas limit will be increased to the estimated value - dynamically
+      gasEstimate = await this.provider.estimateGas(txWithLimit);
     } else {
-      // console.log("using given gaslimit for estimation:", tx.gasLimit);
+      console.log("Using given gaslimit for estimation:", tx.gasLimit);
       gasEstimate = await this.provider.estimateGas(tx);
     }
 
