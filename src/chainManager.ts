@@ -125,7 +125,7 @@ export class ChainManager {
   /**
    * Estimates the gas cost for a transaction and validates the wallet balance.
    */
-  private async validateFunds(tx: Partial<TransactionRequest>): Promise<void> {
+  private async validateFunds(tx: Partial<TransactionRequest>): Promise<Partial<TransactionRequest>> {
     let gasEstimate;
     if (tx.gasLimit === undefined) {
       // Using current balance as limit for estimation
@@ -172,6 +172,9 @@ export class ChainManager {
       console.warn("Warning: Wallet funds are running low, balance:", this.balance);
       console.warn("balance after tx:", this.balance - cost);
     }
+
+    tx.gasLimit = gasEstimate * 11n / 10n;
+    return tx;
   }
 
   /**
@@ -190,7 +193,7 @@ export class ChainManager {
     this.addChainId(tx);
 
     // Validate balance and estimate gas
-    await this.validateFunds(tx);
+    tx = await this.validateFunds(tx);
 
     // Sign the transaction
     const signedTx = await this.signTransaction(tx);
