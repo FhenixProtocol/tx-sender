@@ -191,12 +191,14 @@ export class ChainManager {
 
     // Validate balance and estimate gas
     await this.validateFunds(tx);
-
+    console.log("Funds validated");
     // Sign the transaction
     const signedTx = await this.signTransaction(tx);
+    console.log("Signed transaction", JSON.stringify(signedTx));
 
     // Broadcast the transaction if specified
     if (this.broadcast) {
+      console.log("Broadcasting transaction", JSON.stringify(signedTx));
       const txResponse = await this.broadcastTransaction(signedTx);
       // Sync balance after broadcast
       await this.syncBalance();
