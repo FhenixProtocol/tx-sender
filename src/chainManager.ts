@@ -128,13 +128,13 @@ export class ChainManager {
   private async validateFunds(tx: Partial<TransactionRequest>): Promise<Partial<TransactionRequest>> {
     let gasEstimate;
     if (tx.gasLimit === undefined) {
-      // Using current balance as limit for estimation
       const txWithLimit = { ...tx, gasLimit: 1_000_000 };
       console.log("The gas limit is undefined, using current 1Mil as limit for estimation:", txWithLimit.gasLimit);
       // Since the gas is being estimated, with binary search, we can use a relative low gas limit 
       // to avoid wasting gas on the estimation itself
       // In the worst case, the gas limit will be increased to the estimated value - dynamically
       gasEstimate = await this.provider.estimateGas(txWithLimit);
+      tx.gasLimit = gasEstimate * 11n / 10n;
     } else {
       console.log("Using given gaslimit for estimation:", tx.gasLimit);
       gasEstimate = await this.provider.estimateGas(tx);
@@ -173,7 +173,6 @@ export class ChainManager {
       console.warn("balance after tx:", this.balance - cost);
     }
 
-    tx.gasLimit = gasEstimate * 11n / 10n;
     return tx;
   }
 
