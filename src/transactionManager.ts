@@ -51,7 +51,7 @@ export class TransactionManager {
         const envVariableName = `${chainName.toUpperCase()}_PRIVATE_KEY`;
         if (!process.env[envVariableName]) {
           throw new Error(
-            `No private key found for chain "${chainName}, ` +
+            `No private key found for chain "${chainName}", ` +
             `neither as part of the config, or as the env variable ${envVariableName}".`
           );
         }
