@@ -6,6 +6,7 @@ export interface ChainManagerConfig {
   chainId?: number;                  // Optional chain ID for Ethereum
   broadcast?: boolean;               // Whether to automatically broadcast transactions
   privateKey: string;                // Ethereum private key
+  feeMultiplier?: bigint;            // Fee multiplier for gas estimation
 }
 
 export class ChainManager {
@@ -16,9 +17,10 @@ export class ChainManager {
   private broadcast: boolean;
   private chainId: number | undefined = undefined;
   private balance: bigint = BigInt(0);
+  private feeMultiplier: bigint = BigInt(12) / BigInt(10);
 
   constructor(config: ChainManagerConfig) {
-    const { privateKey, rpcUrl, chainId, broadcast = false } = config;
+    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = BigInt(12) / BigInt(10) } = config;
 
     if (!privateKey || !rpcUrl) {
       throw new Error("Private key and RPC URL are required.");
@@ -27,6 +29,7 @@ export class ChainManager {
     this.wallet = new Wallet(privateKey, this.provider);
     this.broadcast = broadcast;
     this.chainId = chainId;
+    this.feeMultiplier = feeMultiplier;
 
     // Fetch initial wallet balance
     this.syncBalance().catch(err => {
@@ -122,6 +125,64 @@ export class ChainManager {
     }
   }
 
+  private checkForMessageInError(error: unknown, message: string): boolean {
+    return Boolean(
+      error && 
+      typeof error === 'object' && 
+      'message' in error && 
+      typeof (error as { message: unknown }).message === 'string' && 
+      (error as { message: string }).message.includes(message)
+    )
+  }
+
+  private isMethodNotFound(error: unknown): boolean {
+    return Boolean(
+      error && 
+      typeof error === 'object' &&
+      'code' in error &&
+      (
+        (error as { code: number }).code === -32601 || 
+        (
+          'message' in error && 
+          typeof (error as { message: unknown }).message === 'string' && 
+          (error as { message: string }).message.includes("method not found")
+        )
+      )
+    );
+  }
+
+  private async getFeeForChain(multiplier: bigint) {
+    try {
+      // Attempt EIP-1559 fee estimation
+      const priorityFee = BigInt(await this.provider.send("eth_maxPriorityFeePerGas", []));
+      const latestBlock = await this.provider.getBlock("latest");
+      if (latestBlock === null) {
+        throw new Error("Failed to fetch latest block");
+      }
+
+      const baseFee = latestBlock.baseFeePerGas;
+      if (baseFee === null) {
+        throw new Error("Failed to fetch base fee");
+      }
+      return {
+        maxFeePerGas: baseFee + (priorityFee * multiplier),
+        maxPriorityFeePerGas: priorityFee,
+      }
+    } catch (error) {
+      // Type guard for error object with code property
+      if (this.isMethodNotFound(error) || this.checkForMessageInError(error, "Failed to fetch base fee")) {
+        // Fall back to `eth_gasPrice` for legacy chains
+        const feeData = await this.provider.getFeeData();
+        if (!feeData.gasPrice) throw new Error("Failed to get gas price");
+        return {
+          gasPrice: feeData.gasPrice * multiplier, 
+        };
+      } else {
+        throw error; 
+      } 
+    }
+  }
+
   /**
    * Estimates the gas cost for a transaction and validates the wallet balance.
    */
@@ -133,7 +194,9 @@ export class ChainManager {
       // to avoid wasting gas on the estimation itself
       // In the worst case, the gas limit will be increased to the estimated value - dynamically
       gasEstimate = await this.provider.estimateGas(txWithLimit);
-      tx.gasLimit = gasEstimate * 11n / 10n;
+      tx.gasLimit = gasEstimate * 110n / 100n;
+      const feeData = await this.getFeeForChain(this.feeMultiplier);
+      Object.assign(tx, feeData);
     } else {
       console.log("Using given gaslimit for estimation:", tx.gasLimit);
       gasEstimate = await this.provider.estimateGas(tx);
@@ -153,7 +216,7 @@ export class ChainManager {
     } else if (getBigInt(tx.gasLimit!) < gasEstimate) {
       console.error("Gas limit is too low for transaction,", tx.gasLimit, "<", gasEstimate);
       throw new Error("Gas limit is too low for transaction.", );
-    } else if (getBigInt(tx.gasLimit!) > gasEstimate) {
+    } else if (getBigInt(tx.gasLimit!) > gasEstimate * 125n / 100n) {
       console.warn("Warning: Gas limit is higher than estimated,", tx.gasLimit, ">", gasEstimate);
     }
 
@@ -167,9 +230,9 @@ export class ChainManager {
       throw new Error(`Insufficient funds for transaction. Account ${this.wallet.address}'s balance:, ${this.balance}, wanted: , ${cost}`);
     }
 
-    if (this.balance - cost < parseEther("0.1")) {
+    if (this.balance - BigInt(cost) < parseEther("0.1")) {
       console.warn("Warning: Wallet funds are running low, balance:", this.balance);
-      console.warn("balance after tx:", this.balance - cost);
+      console.warn("balance after tx:", this.balance - BigInt(cost));
     }
 
     return tx;
