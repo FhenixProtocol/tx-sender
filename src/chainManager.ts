@@ -166,7 +166,7 @@ export class ChainManager {
       }
       return {
         maxFeePerGas: baseFee + (priorityFee * multiplier),
-        maxPriorityFeePerGas: priorityFee,
+        maxPriorityFeePerGas: priorityFee * multiplier,
       }
     } catch (error) {
       // Type guard for error object with code property
