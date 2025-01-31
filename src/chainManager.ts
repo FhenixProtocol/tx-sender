@@ -193,7 +193,7 @@ export class ChainManager {
       // Since the gas is being estimated, with binary search, we can use a relative low gas limit 
       // to avoid wasting gas on the estimation itself
       // In the worst case, the gas limit will be increased to the estimated value - dynamically
-      gasEstimate = await this.provider.estimateGas(txWithLimit);
+      gasEstimate = await this.provider.estimateGas({...txWithLimit, from: this.wallet.address});
       tx.gasLimit = gasEstimate * 110n / 100n;
       const feeData = await this.getFeeForChain(this.feeMultiplier);
       Object.assign(tx, feeData);
