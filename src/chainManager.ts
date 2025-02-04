@@ -227,7 +227,12 @@ export class ChainManager {
     }
 
     if (cost > this.balance) {
-      throw new Error(`Insufficient funds for transaction. Account ${this.wallet.address}'s balance:, ${this.balance}, wanted: , ${cost}`);
+      // retry just in case it was missed
+      await this.syncBalance();
+      if (cost > this.balance) {
+        console.error("Insufficient funds for transaction. Account", this.wallet.address, "'s balance:", this.balance, "wanted:", cost);
+        throw new Error(`Insufficient funds for transaction. Account ${this.wallet.address}'s balance:, ${this.balance}, wanted: , ${cost}`);
+      }
     }
 
     if (this.balance - BigInt(cost) < parseEther("0.1")) {
