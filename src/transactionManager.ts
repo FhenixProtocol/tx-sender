@@ -1,5 +1,5 @@
 import { TransactionRequest, TransactionResponse } from "ethers";
-import { ChainManagerConfig, ChainManager, RobustTxConfig } from "./chainManager";
+import { ChainManagerConfig, ChainManager, TxConfig } from "./chainManager";
 import { loadEnv } from "./utils";
 
 interface TransactionManagerConfig {
@@ -86,7 +86,7 @@ export class TransactionManager {
    */
   public async sendTransaction(
     tx: Partial<TransactionRequest>,
-    config: RobustTxConfig = {},
+    config: TxConfig = {},
     chain?: string
   ): Promise<{ signedTx: string; txResponse?: TransactionResponse }> {
     let chainManager = this.getChainManager(chain);

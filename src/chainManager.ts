@@ -1,6 +1,23 @@
 import { Wallet, JsonRpcProvider, TransactionRequest, TransactionResponse } from "ethers";
 import { formatEther, parseEther, getBigInt } from "ethers";
 
+const BLOCK_TIME = 13000; // 13 seconds, typical Ethereum block time is 12-13 seconds
+
+function verifyNonceTooLow(error: unknown, tx: Partial<TransactionRequest>, nonceForThisTransaction: number | null): boolean {
+    return (error instanceof Error && (error.message.includes("nonce too low") || error.message.includes("NONCE_EXPIRED")));
+}
+
+function isNetworkError(error: unknown): boolean {
+    return error instanceof Error && 
+        (error.message.includes("network") || error.message.includes("connection"));
+}
+
+  //Block tags:
+  //"earliest" for the earliest/genesis block
+  //"latest" - for the latest mined block
+  //"safe" - for the latest safe head block
+  //"finalized" - for the latest finalized block
+  //"pending" - for the pending state/transactions
 export interface ChainManagerConfig {
   rpcUrl: string;                    // Ethereum RPC URL
   chainId?: number;                  // Optional chain ID for Ethereum
@@ -10,12 +27,11 @@ export interface ChainManagerConfig {
   blockTag?: string;                 // Block tag to use for transaction count
 }
 
-export interface RobustTxConfig {
+export interface TxConfig {
     timeout?: number;          // Timeout for each attempt in ms (default: 30000)
     maxRetryAttempts?: number;      // Maximum number of retry attempts (default: infinite)
     gasIncreaseFactor?: number; // Factor to increase gas by on retry (default: 1.2)
     retryDelay?: number;      // Delay between retries in ms (default: 1000)
-    maxRetryDelay?: number;   // Maximum delay between retries (default: 30000)
     maxGasPrice?: bigint;     // Maximum gas price willing to pay
     confirmations?: number;   // Number of confirmations to wait for
     useExponentialBackoff?: boolean; // Use exponential backoff instead of linear (default: false)
@@ -298,7 +314,7 @@ export class ChainManager {
   /**
    * Sends a transaction: Signs and optionally broadcasts it.
    */
-  public async _sendTransaction(
+  private async _sendTransaction(
     tx: Partial<TransactionRequest>
   ): Promise<{ signedTx: string; txResponse?: TransactionResponse }> {
     this.addChainId(tx);
@@ -320,6 +336,31 @@ export class ChainManager {
     return { signedTx };
   }
 
+  private async checkMempoolStuck(txResponse: TransactionResponse): Promise<boolean> {
+      try {
+          const tx = await this.provider.getTransaction(txResponse.hash);
+          // If transaction is still pending after timeout, consider it stuck
+          return tx !== null && tx.blockNumber === null;
+      } catch (error) {
+          return false;
+      }
+  };
+
+  private async verifyExhausted(maxRetryAttempts: number | undefined, attempt: number, lastError: Error, nonceForThisTransaction: number | null, currentResult: { signedTx: string; txResponse?: TransactionResponse } | null): Promise<void> {
+    let isStuck = false;
+    if (currentResult && currentResult.txResponse && lastError instanceof Error && lastError.message.toLowerCase().includes("timeout")) {
+      // Check if transaction is stuck in mempool
+      if (await this.checkMempoolStuck(currentResult.txResponse)) {
+          console.warn("Transaction stuck in mempool, retrying with higher gas...");
+          isStuck = true;
+      }
+    }   
+    
+    if (isStuck && (maxRetryAttempts !== undefined && attempt >= maxRetryAttempts - 1)) {
+      throw new Error(`Failed to send transaction after ${maxRetryAttempts} attempts: ${lastError.message} with nonce ${nonceForThisTransaction} and tx hash ${currentResult?.txResponse?.hash}`);
+    }
+  }
+
   /**
    * Sends a transaction with automatic retry and gas price adjustment for stuck transactions.
    * This function will:
@@ -338,7 +379,6 @@ export class ChainManager {
    * @param config.maxAttempts - Maximum number of retry attempts (default: infinite)
    * @param config.gasIncreaseFactor - Multiply gas price by this factor on each retry (default: 1.2)
    * @param config.retryDelay - Initial delay between retries in ms (default: 1000)
-   * @param config.maxRetryDelay - Maximum delay between retries in ms (default: 30000)
    * @param config.maxGasPrice - Maximum gas price willing to pay (in wei) (optional)
    * @param config.confirmations - Number of confirmations to wait for (default: 1)
    *
@@ -354,14 +394,13 @@ export class ChainManager {
    */
   public async sendTransaction(
     tx: Partial<TransactionRequest>,
-    config: RobustTxConfig = {}
+    config: TxConfig = {}
   ): Promise<{ signedTx: string; txResponse: TransactionResponse }> {
     const {
-        timeout = 30000,
+        timeout = 2*BLOCK_TIME,
         maxRetryAttempts = 1,
         gasIncreaseFactor = 1.1,
-        retryDelay = 1000,
-        maxRetryDelay = 30000,
+        retryDelay = 0,
         confirmations = 1,
         useExponentialBackoff = true
     } = config;
@@ -369,61 +408,32 @@ export class ChainManager {
     let attempt = 0;
     let lastError: Error | null = null;
     let nonceForThisTransaction: number | null = null;
-    let lastTxResponse: TransactionResponse | null = null;
     let currentResult: { signedTx: string; txResponse?: TransactionResponse } | null = null;
-    const isUserProvidedNonce = tx.nonce !== undefined;
+    let isUserProvidedNonce = false;
 
     // If the nonce is provided by the user, use it
-    if (isUserProvidedNonce && tx.nonce !== undefined) {
+    if (tx.nonce !== undefined) {
       nonceForThisTransaction = tx.nonce;
+      isUserProvidedNonce = true;
     }
-
-    // Add mempool check
-    const checkMempoolStuck = async (txResponse: TransactionResponse): Promise<boolean> => {
-        try {
-            const tx = await this.provider.getTransaction(txResponse.hash);
-            // If transaction is still pending after timeout, consider it stuck
-            return tx !== null && tx.blockNumber === null;
-        } catch (error) {
-            return false;
-        }
-    };
 
     while (maxRetryAttempts === undefined || attempt <= maxRetryAttempts) {
         try {
             if (attempt > 0) {
-                const backoffDelay = useExponentialBackoff ? Math.min(
-                    retryDelay * Math.pow(2, attempt - 1),
-                    maxRetryDelay
-                ) : retryDelay;
-                await new Promise(resolve => setTimeout(resolve, backoffDelay));
+                // will be skipped if it is the very first attempt
+                // Prepare for retry attempts
 
-                // Only reuse managed nonce, don't override user's nonce
+                const backoffDelay = useExponentialBackoff ? retryDelay * Math.pow(2, attempt - 1) : retryDelay;
+
+                // update the nonce for this transaction, only if it's not provided by the user and it's not null
                 if (!isUserProvidedNonce && nonceForThisTransaction !== null) {
                     tx.nonce = nonceForThisTransaction;
                 }
 
-                // First validate the transaction with current gas prices
-                tx = await this.validateFunds(tx);
-
-                // Calculate increase factor for better mempool acceptance
-                const increaseFactor = Math.pow(gasIncreaseFactor, attempt);
-
-                // Then apply the gas increase on top of the validated transaction
-                tx = await this.applyGasIncreaseFactor(tx, increaseFactor);
-
-                // Check against max gas price if specified
-                if (config.maxGasPrice) {
-                    const effectiveGasPrice = tx.maxFeePerGas || tx.gasPrice;
-                    if (effectiveGasPrice && BigInt(effectiveGasPrice) > config.maxGasPrice) {
-                        throw new Error("Gas price exceeded maximum allowed");
-                    }
-                }
-
-                console.warn(`Retrying transaction with ${increaseFactor}x gas price. Attempt ${attempt + 1}${maxRetryAttempts ? '/' + maxRetryAttempts : ''}`);
+                tx = await this.prepareForRetry(tx, backoffDelay, gasIncreaseFactor, config.maxGasPrice, attempt);
             }
             
-            // Send the transaction
+            // Send the transaction, writing the transaction to the mempool
             currentResult = await this._sendTransaction(tx);
 
             if (!currentResult.txResponse) {
@@ -434,55 +444,29 @@ export class ChainManager {
             nonceForThisTransaction = currentResult.txResponse.nonce;
 
             // Wait for confirmation with timeout
-            try {
-                await currentResult.txResponse.wait(confirmations, timeout);
+            await currentResult.txResponse.wait(confirmations, timeout);
 
-                lastTxResponse = currentResult.txResponse;
-                return currentResult as { signedTx: string; txResponse: TransactionResponse };
-            } catch (error) {
-                if (error instanceof Error && error.message.toLowerCase().includes("timeout")) {
-                    // Check if transaction is stuck in mempool
-                    if (await checkMempoolStuck(currentResult.txResponse)) {
-                        console.warn("Transaction stuck in mempool, retrying with higher gas...");
-                        // Let the retry logic handle it
-                        throw error;
-                    }
-                }
-                throw error;
-            }
-
+            // Return the result on success
+            return currentResult as { signedTx: string; txResponse: TransactionResponse };
         } catch (error) {
           lastError = error as Error;
 
-          // If we've exhausted our attempts, throw the last error
-          if (maxRetryAttempts !== undefined && attempt >= maxRetryAttempts - 1) {
-              throw new Error(`Failed to send transaction after ${maxRetryAttempts} attempts: ${lastError.message} with nonce ${nonceForThisTransaction} and tx hash ${currentResult?.txResponse?.hash}`);
-          }
+          // If we've exhausted our attempts, throw the last error, this should be handled by the requester
+          this.verifyExhausted(maxRetryAttempts, attempt, lastError, nonceForThisTransaction, currentResult);
 
-          // Check if error indicates nonce too low, sync nonce
-          if (error instanceof Error && (error.message.includes("nonce too low") || error.message.includes("NONCE_EXPIRED"))) {
-            // this will force the nonce to be fetched again
+          if (verifyNonceTooLow(error, tx, nonceForThisTransaction)) {
+            // Check if error indicates nonce too low, force nonce sync by setting nonce to null
+            console.warn("Nonce too low detected, forcing nonce sync...");
             tx.nonce = null;
             nonceForThisTransaction = null;
-            attempt++;
-            continue;
+          } else if (isNetworkError(error)) {
+              // Handle network errors by waiting longer before retrying
+              console.warn("Network error detected, Error:", error, "waiting longer before retry...");
+              await new Promise(resolve => setTimeout(resolve, retryDelay * maxRetryAttempts));
+          } else {
+            console.warn("Error detected, incrementing attempt counter. Error:", error);
           }
-
-          // Handle network errors differently
-          if (error instanceof Error &&
-              (error.message.includes("network") || error.message.includes("connection"))) {
-              console.warn("Network error detected, waiting longer before retry...");
-              await new Promise(resolve => setTimeout(resolve, maxRetryDelay));
-              attempt++;
-              continue;
-          }
-
           attempt++;
-        } finally {
-            if (currentResult?.txResponse) {
-                lastTxResponse = null;
-                lastError = null;
-            }
         }
     }
 
@@ -491,6 +475,33 @@ export class ChainManager {
 
   public updateBlockTag(blockTag: string): void {
     this.blockTag = blockTag;
+  }
+
+  private async prepareForRetry(tx: Partial<TransactionRequest>, backoffDelay: number, gasIncreaseFactor: number, maxGasPrice: bigint | undefined, attempt: number): Promise<Partial<TransactionRequest>> {
+    if (backoffDelay > 0) {
+        await new Promise(resolve => setTimeout(resolve, backoffDelay));
+    }
+
+    // First validate the transaction with current gas prices
+    tx = await this.validateFunds(tx);
+    
+    // Calculate increase factor for better mempool acceptance
+    const increaseFactor = Math.pow(gasIncreaseFactor, attempt);
+
+    // Then apply the gas increase on top of the validated transaction
+    tx = await this.applyGasIncreaseFactor(tx, increaseFactor);
+
+    // Check against max gas price if specified
+    if (maxGasPrice) {
+        const effectiveGasPrice = tx.maxFeePerGas || tx.gasPrice;
+        if (effectiveGasPrice && BigInt(effectiveGasPrice) > maxGasPrice) {
+            throw new Error("Gas price exceeded maximum allowed");
+        }
+    }
+
+    console.warn(`Retrying transaction with ${increaseFactor}x gas price. Attempt ${attempt + 1}`);
+
+    return tx;
   }
 
 }
