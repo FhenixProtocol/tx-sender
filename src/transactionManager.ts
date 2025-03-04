@@ -1,5 +1,5 @@
 import { TransactionRequest, TransactionResponse } from "ethers";
-import { ChainManagerConfig, ChainManager } from "./chainManager";
+import { ChainManagerConfig, ChainManager, TxConfig } from "./chainManager";
 import { loadEnv } from "./utils";
 
 interface TransactionManagerConfig {
@@ -27,7 +27,7 @@ export class TransactionManager {
   private defaultChain: string | null;
 
   constructor(config: TransactionManagerConfig) {
-    const { chains, broadcast = false, defaultChain = null } = config;
+    const { chains, broadcast = false, defaultChain = null} = config;
 
     this.broadcast = broadcast;
     this.chainManagers = new Map();
@@ -38,6 +38,7 @@ export class TransactionManager {
       if (config.broadcast === undefined) {
         config.broadcast = broadcast
       }
+
       this.chainManagers.set(chainName, new ChainManager(config));
     }
   }
@@ -85,11 +86,12 @@ export class TransactionManager {
    */
   public async sendTransaction(
     tx: Partial<TransactionRequest>,
+    config: TxConfig = {},
     chain?: string
   ): Promise<{ signedTx: string; txResponse?: TransactionResponse }> {
     let chainManager = this.getChainManager(chain);
 
-    return chainManager.sendTransaction(tx);
+    return chainManager.sendTransaction(tx, config);
   }
 
   public setDefaultChain(chain: string): void {
@@ -113,5 +115,15 @@ export class TransactionManager {
     }
 
     return chainManager;
+  }
+
+  public setSteadyStateForChain(chain: string): void {
+    let chainManager = this.getChainManager(chain);
+    chainManager.updateBlockTag("latest");
+  }
+
+  public updateBlockTagForChain(chain: string, blockTag: string): void {
+    let chainManager = this.getChainManager(chain);
+    chainManager.updateBlockTag(blockTag);
   }
 }
