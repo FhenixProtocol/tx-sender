@@ -46,10 +46,10 @@ export class ChainManager {
   private chainId: number | undefined = undefined;
   private balance: bigint = BigInt(0);
   private feeMultiplier: bigint = BigInt(12) / BigInt(10);
-  private blockTag: string = "finalized";
+  private blockTag: string = "latest";
 
   constructor(config: ChainManagerConfig) {
-    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = BigInt(12) / BigInt(10), blockTag = "finalized"} = config;
+    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = BigInt(12) / BigInt(10), blockTag = "latest"} = config;
 
     if (!privateKey || !rpcUrl) {
       throw new Error("Private key and RPC URL are required.");
@@ -192,22 +192,21 @@ export class ChainManager {
       if (baseFee === null) {
         throw new Error("Failed to fetch base fee");
       }
+      // Return only EIP-1559 fields
       return {
         maxFeePerGas: baseFee + (priorityFee * multiplier),
         maxPriorityFeePerGas: priorityFee * multiplier,
       }
     } catch (error) {
-      // Type guard for error object with code property
       if (this.isMethodNotFound(error) || this.checkForMessageInError(error, "Failed to fetch base fee")) {
-        // Fall back to `eth_gasPrice` for legacy chains
+        // Return only legacy field (gasPrice - eth_gasPrice)
         const feeData = await this.provider.getFeeData();
         if (!feeData.gasPrice) throw new Error("Failed to get gas price");
         return {
           gasPrice: feeData.gasPrice * multiplier,
         };
-      } else {
-        throw error;
       }
+        throw error;
     }
   }
 
@@ -227,20 +226,8 @@ export class ChainManager {
 
       const multiplier = BigInt(Math.floor(increaseFactor * 100)) / BigInt(100);
       const feeData = await this.getFeeForChain(this.feeMultiplier);
-
       const newTx = { ...tx }; // Create a new object to avoid modifying the input
-
-
-      // EIP-1559 fee estimation, this is the recommended way to estimate fees
-
-
-      if ('maxFeePerGas' in feeData && feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
-          newTx.maxFeePerGas = feeData.maxFeePerGas * multiplier;
-          newTx.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas * multiplier;
-      } else if ('gasPrice' in feeData && feeData.gasPrice) {
-          newTx.gasPrice = feeData.gasPrice * multiplier;
-      }
-
+      this.setGasFees(newTx, feeData, multiplier);
       return newTx;
   }
 
@@ -257,7 +244,7 @@ export class ChainManager {
       gasEstimate = await this.provider.estimateGas({...txWithLimit, from: this.wallet.address});
       tx.gasLimit = gasEstimate * 110n / 100n;
       const feeData = await this.getFeeForChain(this.feeMultiplier);
-      Object.assign(tx, feeData);
+      this.setGasFees(tx, feeData);
     } else {
       console.log("Using given gaslimit for estimation:", tx.gasLimit);
       gasEstimate = await this.provider.estimateGas(tx);
@@ -493,8 +480,8 @@ export class ChainManager {
 
     // Check against max gas price if specified
     if (maxGasPrice) {
-        const effectiveGasPrice = tx.maxFeePerGas || tx.gasPrice;
-        if (effectiveGasPrice && BigInt(effectiveGasPrice) > maxGasPrice) {
+        const effectiveGasPrice = this.getEffectiveGasPrice(tx);
+        if (effectiveGasPrice && effectiveGasPrice > maxGasPrice) {
             throw new Error("Gas price exceeded maximum allowed");
         }
     }
@@ -502,6 +489,40 @@ export class ChainManager {
     console.warn(`Retrying transaction with ${increaseFactor}x gas price. Attempt ${attempt + 1}`);
 
     return tx;
+  }
+
+  /**
+   * Helper function to clear and set gas price fields consistently
+   * @param tx Transaction to update
+   * @param feeData Fee data containing either EIP-1559 or legacy gas prices
+   * @param multiplier Optional multiplier to apply to the fees
+   */
+  private setGasFees(
+      tx: Partial<TransactionRequest>, 
+      feeData: { maxFeePerGas?: bigint, maxPriorityFeePerGas?: bigint, gasPrice?: bigint },
+      multiplier: bigint = BigInt(1)
+  ): void {
+      // Clear existing gas fields
+      delete tx.gasPrice;
+      delete tx.maxFeePerGas;
+      delete tx.maxPriorityFeePerGas;
+
+      // Apply either EIP-1559 or legacy fees
+      if ('maxFeePerGas' in feeData && feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+          tx.maxFeePerGas = feeData.maxFeePerGas * multiplier;
+          tx.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas * multiplier;
+      } else if ('gasPrice' in feeData && feeData.gasPrice) {
+          tx.gasPrice = feeData.gasPrice * multiplier;
+      }
+  }
+
+  private getEffectiveGasPrice(tx: Partial<TransactionRequest>): bigint | undefined {
+    if (tx.maxFeePerGas) {
+      return BigInt(tx.maxFeePerGas);
+    } else if (tx.gasPrice) {
+      return BigInt(tx.gasPrice);
+    }
+    return undefined;
   }
 
 }
