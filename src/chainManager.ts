@@ -41,15 +41,15 @@ export class ChainManager {
   private provider: JsonRpcProvider;
   private wallet: Wallet;
   private nonce: number | null = null;
+  private latestNonce: number | null = null;
   private nonceSyncing: Promise<number> | null = null;
   private broadcast: boolean;
   private chainId: number | undefined = undefined;
   private balance: bigint = BigInt(0);
   private feeMultiplier: bigint = BigInt(12) / BigInt(10);
-  private blockTag: string = "latest";
-
+  private ready: boolean = false;
   constructor(config: ChainManagerConfig) {
-    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = BigInt(12) / BigInt(10), blockTag = "latest"} = config;
+    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = BigInt(12) / BigInt(10)} = config;
 
     if (!privateKey || !rpcUrl) {
       throw new Error("Private key and RPC URL are required.");
@@ -59,12 +59,79 @@ export class ChainManager {
     this.broadcast = broadcast;
     this.chainId = chainId;
     this.feeMultiplier = feeMultiplier;
-    this.blockTag = blockTag;
 
     // Fetch initial wallet balance
     this.syncBalance().catch(err => {
       console.error("Failed to fetch initial balance:", err);
     });
+
+    // Fetch initial nonce
+    this.syncNonce().catch(err => {
+      console.error("Failed to fetch initial nonce:", err);
+    });
+
+    // make sure there are no pending transactions
+    this.handleStuckTransactions().catch(err => {
+      console.error("Failed to handle stuck transactions:", err);
+    });
+
+    // wait for the chain to be ready
+    this.waitForReady().catch(err => {
+      console.error("Failed to wait for chain to be ready:", err);
+    });
+  }
+
+  private async waitForReady(): Promise<void> {
+    while (!this.ready) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+
+  public isReady(): boolean {
+    return this.ready;
+  }
+
+  private async handleStuckTransactions(): Promise<void> {
+    if (this.latestNonce !== null && this.nonce !== null && this.latestNonce < this.nonce) {
+      console.warn("Warning: There are pending transactions, this could cause issues with the nonce sync, we'll treat them as stuck");
+      
+      // Create dummy transaction
+      let dummyTx: Partial<TransactionRequest> = {
+        to: this.wallet.address,
+        value: parseEther("0"),
+      };
+      for (let i = this.latestNonce; i < this.nonce; i++) {
+        // set the nonce
+        dummyTx.nonce = i;
+        
+        // Send the transaction
+        const tx = await this.sendTransaction(dummyTx, {
+          timeout: 2*BLOCK_TIME,
+          maxRetryAttempts: undefined,
+          gasIncreaseFactor: 2,
+          retryDelay: 0,
+        });
+        if (tx.txResponse) {
+          const txResponse = tx.txResponse as TransactionResponse;
+          this.logSuccessUnstuckedTx(txResponse, true);
+        }
+      }
+    }
+
+    if (this.nonce !== null && this.latestNonce !== null && this.nonce !== this.latestNonce) {
+      throw new Error("Nonce is not synced, this could cause issues with the nonce sync, failed to release stuck transactions");
+    }
+
+    console.log("chainManager %s is ready", this.chainId);
+    this.ready = true;
+  }
+
+  private logSuccessUnstuckedTx(txResponse: TransactionResponse, initial: boolean = false): void {
+    if (txResponse.maxFeePerGas) {
+      console.log("chainManager unstuck %s: transaction with nonce: %s, fee: %s", initial ? "init" : "retry", txResponse.nonce, txResponse.maxFeePerGas);
+    } else if (txResponse.gasPrice) {
+      console.log("chainManager unstuck %s: transaction with nonce: %s, fee: %s", initial ? "init" : "retry", txResponse.nonce, txResponse.gasPrice);
+    }
   }
 
   /**
@@ -81,7 +148,8 @@ export class ChainManager {
    */
   private async syncNonce(): Promise<void> {
     if (this.nonce === null) {
-      this.nonceSyncing = this.provider.getTransactionCount(this.wallet.address, this.blockTag);
+      this.nonceSyncing = this.provider.getTransactionCount(this.wallet.address, "pending");
+      this.latestNonce = await this.provider.getTransactionCount(this.wallet.address, "latest");
       this.nonce = await this.nonceSyncing;
     }
   }
@@ -397,7 +465,7 @@ export class ChainManager {
     let nonceForThisTransaction: number | null = null;
     let currentResult: { signedTx: string; txResponse?: TransactionResponse } | null = null;
     let isUserProvidedNonce = false;
-
+    
     // If the nonce is provided by the user, use it
     if (tx.nonce !== undefined) {
       nonceForThisTransaction = tx.nonce;
@@ -434,6 +502,9 @@ export class ChainManager {
             await currentResult.txResponse.wait(confirmations, timeout);
 
             // Return the result on success
+            if (attempt > 0) {
+              this.logSuccessUnstuckedTx(currentResult.txResponse);
+            }
             return currentResult as { signedTx: string; txResponse: TransactionResponse };
         } catch (error) {
           lastError = error as Error;
@@ -458,10 +529,6 @@ export class ChainManager {
     }
 
     throw lastError || new Error("Failed to send transaction");
-  }
-
-  public updateBlockTag(blockTag: string): void {
-    this.blockTag = blockTag;
   }
 
   private async prepareForRetry(tx: Partial<TransactionRequest>, backoffDelay: number, gasIncreaseFactor: number, maxGasPrice: bigint | undefined, attempt: number): Promise<Partial<TransactionRequest>> {

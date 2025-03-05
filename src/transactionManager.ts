@@ -117,13 +117,17 @@ export class TransactionManager {
     return chainManager;
   }
 
-  public setSteadyStateForChain(chain: string): void {
+  public isReadyForChain(chain: string): boolean {
     let chainManager = this.getChainManager(chain);
-    chainManager.updateBlockTag("latest");
+    return chainManager.isReady();
   }
 
-  public updateBlockTagForChain(chain: string, blockTag: string): void {
-    let chainManager = this.getChainManager(chain);
-    chainManager.updateBlockTag(blockTag);
+  public isReady(): boolean {
+    for (const chainManager of this.chainManagers.values()) {
+      if (!chainManager.isReady()) {
+        return false;
+      }
+    }
+    return true;
   }
 }
