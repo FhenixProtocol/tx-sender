@@ -57,7 +57,7 @@ export class ChainManager {
     this.provider = new JsonRpcProvider(rpcUrl, chainId);
     this.wallet = new Wallet(privateKey, this.provider);
     this.broadcast = broadcast;
-    this.chainId = chainId; 
+    this.chainId = chainId;
     this.feeMultiplier = feeMultiplier;
 
     // Fetch initial wallet balance
