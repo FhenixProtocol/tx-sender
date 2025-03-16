@@ -126,7 +126,7 @@ export class ChainManager {
       throw new Error("Nonce is not synced, this could cause issues with the nonce sync, failed to release stuck transactions");
     }
 
-    this.logger.info("chainManager %s is ready", this.chainId);
+    this.logger.info("chainManager %s is ready", {chainId: this.chainId});
     this.ready = true;
   }
 
@@ -466,6 +466,9 @@ export class ChainManager {
 
     let dynamicRetryDelay = retryDelay;
 
+    // Should only be set if it was timed out, suspected as stuck in mempool
+    let dynamicFeeIncreaseFactor = 1;
+
     let attempt = 1;
     let lastError: Error | null = null;
     let nonceForThisTransaction: number | null = null;
@@ -491,7 +494,7 @@ export class ChainManager {
                     tx.nonce = nonceForThisTransaction;
                 }
 
-                tx = await this.prepareForRetry(tx, backoffDelay, gasIncreaseFactor, maxIncreaseFactor, config.maxGasPrice, attempt);
+                tx = await this.prepareForRetry(tx, backoffDelay, dynamicFeeIncreaseFactor, maxIncreaseFactor, config.maxGasPrice, attempt);
             }
             
             // Send the transaction, writing the transaction to the mempool
@@ -516,8 +519,10 @@ export class ChainManager {
           lastError = error as Error;
 
           dynamicRetryDelay = retryDelay;
+          dynamicFeeIncreaseFactor = 1;
           if (await this.checkForStuckTransaction(currentResult, lastError)) {
             this.logger.warn("Transaction stuck in mempool, retrying with higher fee...");
+            dynamicFeeIncreaseFactor = gasIncreaseFactor;
           } else if (verifyNonceTooLow(error, tx, nonceForThisTransaction)) {
             // Check if error indicates nonce too low, force nonce sync by setting nonce to null
             this.logger.warn("Nonce too low detected, forcing nonce sync...");
@@ -566,7 +571,7 @@ export class ChainManager {
         }
     }
 
-    this.logger.warn(`Retrying transaction with ${increaseFactor}x gas price. Attempt ${attempt + 1}`);
+    this.logger.warn(`Retrying transaction with ${increaseFactor}x gas price`, {attempt: attempt + 1});
 
     return tx;
   }
