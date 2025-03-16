@@ -413,7 +413,7 @@ export class ChainManager {
   }
 
   private async verifyExhausted(maxRetryAttempts: number | undefined, attempt: number, lastError: Error, nonceForThisTransaction: number | null, currentResult: { signedTx: string; txResponse?: TransactionResponse } | null): Promise<void> {
-    if (maxRetryAttempts !== undefined && attempt >= maxRetryAttempts) {
+    if (maxRetryAttempts !== undefined && attempt > maxRetryAttempts) {
       throw new Error(`Failed to send transaction after ${maxRetryAttempts} attempts: ${lastError.message} with nonce ${nonceForThisTransaction} and tx hash ${currentResult?.txResponse?.hash}`);
     }
   }
@@ -494,7 +494,7 @@ export class ChainManager {
                     tx.nonce = nonceForThisTransaction;
                 }
 
-                tx = await this.prepareForRetry(tx, backoffDelay, dynamicFeeIncreaseFactor, maxIncreaseFactor, config.maxGasPrice, attempt);
+                tx = await this.prepareForRetry(tx, backoffDelay, dynamicFeeIncreaseFactor, maxIncreaseFactor, config.maxGasPrice, attempt - 1);
             }
             
             // Send the transaction, writing the transaction to the mempool
