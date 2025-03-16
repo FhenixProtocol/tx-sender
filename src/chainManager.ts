@@ -1,6 +1,6 @@
 import { Wallet, JsonRpcProvider, TransactionRequest, TransactionResponse } from "ethers";
 import { formatEther, parseEther, getBigInt } from "ethers";
-
+import { Logger } from "winston";
 const BLOCK_TIME = 13000; // 13 seconds, typical Ethereum block time is 12-13 seconds
 
 function verifyNonceTooLow(error: unknown, tx: Partial<TransactionRequest>, nonceForThisTransaction: number | null): boolean {
@@ -28,13 +28,15 @@ export interface ChainManagerConfig {
 }
 
 export interface TxConfig {
-    timeout?: number;          // Timeout for each attempt in ms (default: 30000)
+    timeout?: number;          // Timeout for each attempt in ms (default: 2*BLOCK_TIME)
     maxRetryAttempts?: number;      // Maximum number of retry attempts (default: infinite)
     gasIncreaseFactor?: number; // Factor to increase gas by on retry (default: 1.2)
-    retryDelay?: number;      // Delay between retries in ms (default: 1000)
-    maxGasPrice?: bigint;     // Maximum gas price willing to pay
+    maxIncreaseFactor?: number; // Maximum gas increase factor (default: gasIncreaseFactor)
+    retryDelay?: number;      // Delay between retries in ms (default: 0)
+    retryDelayOnNetworkIssues?: number; // Delay between retries on network issues in ms (default: 500)
+    maxGasPrice?: bigint;     // Maximum gas price the sender is willing to pay
     confirmations?: number;   // Number of confirmations to wait for
-    useExponentialBackoff?: boolean; // Use exponential backoff instead of linear (default: false)
+    useExponentialBackoff?: boolean; // Use exponential backoff instead of linear (default: true)
 }
 
 export class ChainManager {
@@ -48,7 +50,8 @@ export class ChainManager {
   private balance: bigint = BigInt(0);
   private feeMultiplier: bigint = BigInt(12) / BigInt(10);
   private ready: boolean = false;
-  constructor(config: ChainManagerConfig) {
+  private logger: Logger;
+  constructor(config: ChainManagerConfig, logger: Logger) {
     const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = BigInt(12) / BigInt(10)} = config;
 
     if (!privateKey || !rpcUrl) {
@@ -59,25 +62,26 @@ export class ChainManager {
     this.broadcast = broadcast;
     this.chainId = chainId;
     this.feeMultiplier = feeMultiplier;
+    this.logger = logger;
 
     // Fetch initial wallet balance
     this.syncBalance().catch(err => {
-      console.error("Failed to fetch initial balance:", err);
+      this.logger.error("Failed to fetch initial balance:", err);
     });
 
     // Fetch initial nonce
     this.syncNonce().catch(err => {
-      console.error("Failed to fetch initial nonce:", err);
+      this.logger.error("Failed to fetch initial nonce:", err);
     });
 
     // make sure there are no pending transactions
     this.handleStuckTransactions().catch(err => {
-      console.error("Failed to handle stuck transactions:", err);
+      this.logger.error("Failed to handle stuck transactions:", err);
     });
 
     // wait for the chain to be ready
     this.waitForReady().catch(err => {
-      console.error("Failed to wait for chain to be ready:", err);
+      this.logger.error("Failed to wait for chain to be ready:", err);
     });
   }
 
@@ -93,7 +97,7 @@ export class ChainManager {
 
   private async handleStuckTransactions(): Promise<void> {
     if (this.latestNonce !== null && this.nonce !== null && this.latestNonce < this.nonce) {
-      console.warn("Warning: There are pending transactions, this could cause issues with the nonce sync, we'll treat them as stuck");
+      this.logger.warn("Warning: There are pending transactions, this could cause issues with the nonce sync, we'll treat them as stuck");
       
       // Create dummy transaction
       let dummyTx: Partial<TransactionRequest> = {
@@ -122,15 +126,15 @@ export class ChainManager {
       throw new Error("Nonce is not synced, this could cause issues with the nonce sync, failed to release stuck transactions");
     }
 
-    console.log("chainManager %s is ready", this.chainId);
+    this.logger.info("chainManager %s is ready", this.chainId);
     this.ready = true;
   }
 
   private logSuccessUnstuckedTx(txResponse: TransactionResponse, initial: boolean = false): void {
     if (txResponse.maxFeePerGas) {
-      console.log("chainManager unstuck %s: transaction with nonce: %s, fee: %s", initial ? "init" : "retry", txResponse.nonce, txResponse.maxFeePerGas);
+      this.logger.info("chainManager unstuck %s: transaction with nonce: %s, fee: %s", initial ? "init" : "retry", txResponse.nonce, txResponse.maxFeePerGas);
     } else if (txResponse.gasPrice) {
-      console.log("chainManager unstuck %s: transaction with nonce: %s, fee: %s", initial ? "init" : "retry", txResponse.nonce, txResponse.gasPrice);
+      this.logger.info("chainManager unstuck %s: transaction with nonce: %s, fee: %s", initial ? "init" : "retry", txResponse.nonce, txResponse.gasPrice);
     }
   }
 
@@ -140,7 +144,7 @@ export class ChainManager {
   private async syncBalance(): Promise<void> {
     const balance = await this.provider.getBalance(this.wallet.address);
     this.balance = balance;
-    // console.log(`Wallet balance synced: ${formatEther(this.balance)} ETH`);
+    // this.logger.info(`Wallet balance synced: ${formatEther(this.balance)} ETH`);
   }
 
   /**
@@ -170,15 +174,15 @@ export class ChainManager {
    * Increments the nonce after a transaction.
    */
   private incrementNonce(): void {
-    // console.log("incrementing nonce");
+    // this.logger.info("incrementing nonce");
     if (this.nonce !== null) {
       this.nonce += 1;
     } else if (this.nonceSyncing === null) {
-      console.warn("tx-sender: warning: nonce expected to be syncing");
+      this.logger.warn("tx-sender: warning: nonce expected to be syncing");
     } else {
       this.nonceSyncing.then(n => {
         if (this.nonce === null) {
-          console.warn("tx-sender: warning: nonce not expected to be null");
+          this.logger.warn("tx-sender: warning: nonce not expected to be null");
           this.nonce = n;
         } else {
           this.nonce += 1;
@@ -186,7 +190,7 @@ export class ChainManager {
       });
     }
 
-    // console.log("nonce:", this.nonce);
+    // this.logger.info("nonce:", this.nonce);
   }
 
   /**
@@ -314,17 +318,17 @@ export class ChainManager {
       const feeData = await this.getFeeForChain(this.feeMultiplier);
       this.setGasFees(tx, feeData);
     } else {
-      console.log("Using given gaslimit for estimation:", tx.gasLimit);
+      this.logger.info("Using given gaslimit for estimation:", tx.gasLimit);
       gasEstimate = await this.provider.estimateGas(tx);
     }
 
     if (tx.gasLimit === undefined) {
       tx.gasLimit = gasEstimate;
     } else if (getBigInt(tx.gasLimit!) < gasEstimate) {
-      console.error("Gas limit is too low for transaction,", tx.gasLimit, "<", gasEstimate);
+      this.logger.error("Gas limit is too low for transaction,", tx.gasLimit, "<", gasEstimate);
       throw new Error("Gas limit is too low for transaction.", );
     } else if (getBigInt(tx.gasLimit!) > gasEstimate * 125n / 100n) {
-      console.warn("Warning: Gas limit is higher than estimated,", tx.gasLimit, ">", gasEstimate);
+      this.logger.warn("Warning: Gas limit is higher than estimated,", tx.gasLimit, ">", gasEstimate);
     }
 
     let fee = (tx.gasPrice !== undefined && tx.gasPrice !== null) ? tx.gasPrice : tx.maxFeePerGas;
@@ -344,14 +348,14 @@ export class ChainManager {
       // retry just in case it was missed
       await this.syncBalance();
       if (cost > this.balance) {
-        console.error("Insufficient funds for transaction. Account", this.wallet.address, "'s balance:", this.balance, "wanted:", cost);
+        this.logger.error("Insufficient funds for transaction. Account", this.wallet.address, "'s balance:", this.balance, "wanted:", cost);
         throw new Error(`Insufficient funds for transaction. Account ${this.wallet.address}'s balance:, ${this.balance}, wanted: , ${cost}`);
       }
     }
 
     if (this.balance - BigInt(cost) < parseEther("0.1")) {
-      console.warn("Warning: Wallet funds are running low, balance:", this.balance);
-      console.warn("balance after tx:", this.balance - BigInt(cost));
+      this.logger.warn("Warning: Wallet funds are running low, balance:", this.balance);
+      this.logger.warn("balance after tx:", this.balance - BigInt(cost));
     }
 
     return tx;
@@ -399,17 +403,17 @@ export class ChainManager {
       }
   };
 
-  private async verifyExhausted(maxRetryAttempts: number | undefined, attempt: number, lastError: Error, nonceForThisTransaction: number | null, currentResult: { signedTx: string; txResponse?: TransactionResponse } | null): Promise<void> {
-    let isStuck = false;
+  private async checkForStuckTransaction(currentResult: { signedTx: string; txResponse?: TransactionResponse } | null, lastError: Error): Promise<boolean> {
     if (currentResult && currentResult.txResponse && lastError instanceof Error && lastError.message.toLowerCase().includes("timeout")) {
       // Check if transaction is stuck in mempool
-      if (await this.checkMempoolStuck(currentResult.txResponse)) {
-          console.warn("Transaction stuck in mempool, retrying with higher gas...");
-          isStuck = true;
-      }
+      return await this.checkMempoolStuck(currentResult.txResponse)
     }   
-    
-    if (isStuck && (maxRetryAttempts !== undefined && attempt >= maxRetryAttempts - 1)) {
+
+    return false;
+  }
+
+  private async verifyExhausted(maxRetryAttempts: number | undefined, attempt: number, lastError: Error, nonceForThisTransaction: number | null, currentResult: { signedTx: string; txResponse?: TransactionResponse } | null): Promise<void> {
+    if (maxRetryAttempts !== undefined && attempt >= maxRetryAttempts) {
       throw new Error(`Failed to send transaction after ${maxRetryAttempts} attempts: ${lastError.message} with nonce ${nonceForThisTransaction} and tx hash ${currentResult?.txResponse?.hash}`);
     }
   }
@@ -451,14 +455,18 @@ export class ChainManager {
   ): Promise<{ signedTx: string; txResponse: TransactionResponse }> {
     const {
         timeout = 2*BLOCK_TIME,
-        maxRetryAttempts = 1,
+        maxRetryAttempts = undefined,
         gasIncreaseFactor = 1.1,
+        maxIncreaseFactor = gasIncreaseFactor,
         retryDelay = 0,
+        retryDelayOnNetworkIssues = 500,
         confirmations = 1,
         useExponentialBackoff = true
     } = config;
 
-    let attempt = 0;
+    let dynamicRetryDelay = retryDelay;
+
+    let attempt = 1;
     let lastError: Error | null = null;
     let nonceForThisTransaction: number | null = null;
     let currentResult: { signedTx: string; txResponse?: TransactionResponse } | null = null;
@@ -472,18 +480,18 @@ export class ChainManager {
 
     while (maxRetryAttempts === undefined || attempt <= maxRetryAttempts) {
         try {
-            if (attempt > 0) {
+            if (attempt > 1) {
                 // will be skipped if it is the very first attempt
                 // Prepare for retry attempts
-
-                const backoffDelay = useExponentialBackoff ? retryDelay * Math.pow(2, attempt - 1) : retryDelay;
+                // Start from multiplier of 1 (attempt = 2 multiplier = 1) and then grow exponentially
+                const backoffDelay = useExponentialBackoff ? dynamicRetryDelay * Math.pow(2, attempt - 2) : dynamicRetryDelay;
 
                 // update the nonce for this transaction, only if it's not provided by the user and it's not null
                 if (!isUserProvidedNonce && nonceForThisTransaction !== null) {
                     tx.nonce = nonceForThisTransaction;
                 }
 
-                tx = await this.prepareForRetry(tx, backoffDelay, gasIncreaseFactor, config.maxGasPrice, attempt);
+                tx = await this.prepareForRetry(tx, backoffDelay, gasIncreaseFactor, maxIncreaseFactor, config.maxGasPrice, attempt);
             }
             
             // Send the transaction, writing the transaction to the mempool
@@ -500,28 +508,32 @@ export class ChainManager {
             await currentResult.txResponse.wait(confirmations, timeout);
 
             // Return the result on success
-            if (attempt > 0) {
+            if (attempt > 1) {
               this.logSuccessUnstuckedTx(currentResult.txResponse);
             }
             return currentResult as { signedTx: string; txResponse: TransactionResponse };
         } catch (error) {
           lastError = error as Error;
 
-          // If we've exhausted our attempts, throw the last error, this should be handled by the requester
-          this.verifyExhausted(maxRetryAttempts, attempt, lastError, nonceForThisTransaction, currentResult);
-
-          if (verifyNonceTooLow(error, tx, nonceForThisTransaction)) {
+          dynamicRetryDelay = retryDelay;
+          if (await this.checkForStuckTransaction(currentResult, lastError)) {
+            this.logger.warn("Transaction stuck in mempool, retrying with higher fee...");
+          } else if (verifyNonceTooLow(error, tx, nonceForThisTransaction)) {
             // Check if error indicates nonce too low, force nonce sync by setting nonce to null
-            console.warn("Nonce too low detected, forcing nonce sync...");
+            this.logger.warn("Nonce too low detected, forcing nonce sync...");
             tx.nonce = null;
             nonceForThisTransaction = null;
           } else if (isNetworkError(error)) {
-              // Handle network errors by waiting longer before retrying
-              console.warn("Network error detected, Error:", error, "waiting longer before retry...");
-              await new Promise(resolve => setTimeout(resolve, retryDelay * maxRetryAttempts));
+            dynamicRetryDelay = retryDelayOnNetworkIssues;
+            // Handle network errors by waiting longer before retrying
+            this.logger.warn("Network error detected, Error:", error, "waiting longer before retry...");
           } else {
-            console.warn("Error detected, incrementing attempt counter. Error:", error);
+            dynamicRetryDelay = retryDelayOnNetworkIssues;
+            this.logger.warn("Error detected, incrementing attempt counter. Error:", error);
           }
+          
+          // If we've exhausted our attempts, throw the last error, this should be handled by the requester
+          this.verifyExhausted(maxRetryAttempts, attempt, lastError, nonceForThisTransaction, currentResult);          
           attempt++;
         }
     }
@@ -529,7 +541,7 @@ export class ChainManager {
     throw lastError || new Error("Failed to send transaction");
   }
 
-  private async prepareForRetry(tx: Partial<TransactionRequest>, backoffDelay: number, gasIncreaseFactor: number, maxGasPrice: bigint | undefined, attempt: number): Promise<Partial<TransactionRequest>> {
+  private async prepareForRetry(tx: Partial<TransactionRequest>, backoffDelay: number, gasIncreaseFactor: number, gasIncreaseFactorMax: number, maxGasPrice: bigint | undefined, attempt: number): Promise<Partial<TransactionRequest>> {
     if (backoffDelay > 0) {
         await new Promise(resolve => setTimeout(resolve, backoffDelay));
     }
@@ -538,7 +550,10 @@ export class ChainManager {
     tx = await this.validateFunds(tx);
     
     // Calculate increase factor for better mempool acceptance
-    const increaseFactor = Math.pow(gasIncreaseFactor, attempt);
+    let increaseFactor = Math.pow(gasIncreaseFactor, attempt);
+    if (increaseFactor > gasIncreaseFactorMax) {
+      increaseFactor = gasIncreaseFactorMax;
+    }
 
     // Then apply the gas increase on top of the validated transaction
     tx = await this.applyGasIncreaseFactor(tx, increaseFactor);
@@ -551,7 +566,7 @@ export class ChainManager {
         }
     }
 
-    console.warn(`Retrying transaction with ${increaseFactor}x gas price. Attempt ${attempt + 1}`);
+    this.logger.warn(`Retrying transaction with ${increaseFactor}x gas price. Attempt ${attempt + 1}`);
 
     return tx;
   }
