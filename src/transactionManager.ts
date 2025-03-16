@@ -1,10 +1,11 @@
 import { TransactionRequest, TransactionResponse } from "ethers";
 import { ChainManagerConfig, ChainManager, TxConfig } from "./chainManager";
 import { loadEnv } from "./utils";
-
+import { Logger } from "winston";
 interface TransactionManagerConfig {
   broadcast?: boolean;                    // Whether to automatically broadcast transactions
   defaultChain?: string;                  // Chain to interact with if not specified
+  logger: Logger;                        // Logger to use for logging
   chains: {                               // Map of chain names to their configurations
     [chainName: string]: ChainManagerConfig
   };
@@ -25,13 +26,14 @@ export class TransactionManager {
   private broadcast: boolean;
   private chainManagers: Map<string, ChainManager>;
   private defaultChain: string | null;
-
+  private logger: Logger;
   constructor(config: TransactionManagerConfig) {
-    const { chains, broadcast = false, defaultChain = null} = config;
+    const { chains, broadcast = false, defaultChain = null, logger} = config;
 
     this.broadcast = broadcast;
     this.chainManagers = new Map();
     this.defaultChain = defaultChain;
+    this.logger = logger;
 
     // Initialize chain configurations
     for (const [chainName, config] of Object.entries(chains)) {
@@ -39,12 +41,12 @@ export class TransactionManager {
         config.broadcast = broadcast
       }
 
-      this.chainManagers.set(chainName, new ChainManager(config));
+      this.chainManagers.set(chainName, new ChainManager(config, logger));
     }
   }
 
   static fromDotEnv(config: TransactionManagerConfigPublic) {
-    loadEnv();
+    loadEnv(config.logger);
 
     // complete chain configurations from env
     for (const [chainName, chainConfig] of Object.entries(config.chains)) {
