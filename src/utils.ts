@@ -7,7 +7,7 @@ export function loadEnv(logger: Logger) {
   const result = dotenv.config({ path: envPath });
 
   if (result.error) {
-    logger.warn(`Could not load .env file from ${envPath}:`, result.error.message);
+    logger.warn(`Could not load .env file from ${envPath}:`, {error: result.error.message});
   } else {
     logger.info(`Loaded .env file from ${envPath}`);
   }

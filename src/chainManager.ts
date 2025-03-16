@@ -97,7 +97,7 @@ export class ChainManager {
 
   private async handleStuckTransactions(): Promise<void> {
     if (this.latestNonce !== null && this.nonce !== null && this.latestNonce < this.nonce) {
-      this.logger.warn("Warning: There are pending transactions, this could cause issues with the nonce sync, we'll treat them as stuck");
+      this.logger.warn("There are pending transactions, this could cause issues with the nonce sync, we'll treat them as stuck");
       
       // Create dummy transaction
       let dummyTx: Partial<TransactionRequest> = {
@@ -132,9 +132,9 @@ export class ChainManager {
 
   private logSuccessUnstuckedTx(txResponse: TransactionResponse, initial: boolean = false): void {
     if (txResponse.maxFeePerGas) {
-      this.logger.info("chainManager unstuck %s: transaction with nonce: %s, fee: %s", initial ? "init" : "retry", txResponse.nonce, txResponse.maxFeePerGas);
+      this.logger.info("chainManager unstuck transaction", {txType: initial ? "init" : "retry", nonce: txResponse.nonce, fee: txResponse.maxFeePerGas});
     } else if (txResponse.gasPrice) {
-      this.logger.info("chainManager unstuck %s: transaction with nonce: %s, fee: %s", initial ? "init" : "retry", txResponse.nonce, txResponse.gasPrice);
+      this.logger.info("chainManager unstuck transaction", {txType: initial ? "init" : "retry", nonce: txResponse.nonce, fee: txResponse.gasPrice});
     }
   }
 
@@ -144,7 +144,6 @@ export class ChainManager {
   private async syncBalance(): Promise<void> {
     const balance = await this.provider.getBalance(this.wallet.address);
     this.balance = balance;
-    // this.logger.info(`Wallet balance synced: ${formatEther(this.balance)} ETH`);
   }
 
   /**
@@ -174,23 +173,20 @@ export class ChainManager {
    * Increments the nonce after a transaction.
    */
   private incrementNonce(): void {
-    // this.logger.info("incrementing nonce");
     if (this.nonce !== null) {
       this.nonce += 1;
     } else if (this.nonceSyncing === null) {
-      this.logger.warn("tx-sender: warning: nonce expected to be syncing");
+      this.logger.warn("nonce expected to be syncing");
     } else {
       this.nonceSyncing.then(n => {
         if (this.nonce === null) {
-          this.logger.warn("tx-sender: warning: nonce not expected to be null");
+          this.logger.warn("nonce not expected to be null");
           this.nonce = n;
         } else {
           this.nonce += 1;
         }
       });
     }
-
-    // this.logger.info("nonce:", this.nonce);
   }
 
   /**
@@ -318,17 +314,17 @@ export class ChainManager {
       const feeData = await this.getFeeForChain(this.feeMultiplier);
       this.setGasFees(tx, feeData);
     } else {
-      this.logger.info("Using given gaslimit for estimation:", tx.gasLimit);
+      this.logger.info("Using given gaslimit for estimation", {gasLimit: tx.gasLimit});
       gasEstimate = await this.provider.estimateGas(tx);
     }
 
     if (tx.gasLimit === undefined) {
       tx.gasLimit = gasEstimate;
     } else if (getBigInt(tx.gasLimit!) < gasEstimate) {
-      this.logger.error("Gas limit is too low for transaction,", tx.gasLimit, "<", gasEstimate);
+      this.logger.error("Gas limit is too low for transaction,", {hint: `${tx.gasLimit} < ${gasEstimate}`});
       throw new Error("Gas limit is too low for transaction.", );
     } else if (getBigInt(tx.gasLimit!) > gasEstimate * 125n / 100n) {
-      this.logger.warn("Warning: Gas limit is higher than estimated,", tx.gasLimit, ">", gasEstimate);
+      this.logger.warn("Gas limit is higher than estimated", {hint: `${tx.gasLimit} > ${gasEstimate}`});
     }
 
     let fee = (tx.gasPrice !== undefined && tx.gasPrice !== null) ? tx.gasPrice : tx.maxFeePerGas;
@@ -348,14 +344,13 @@ export class ChainManager {
       // retry just in case it was missed
       await this.syncBalance();
       if (cost > this.balance) {
-        this.logger.error("Insufficient funds for transaction. Account", this.wallet.address, "'s balance:", this.balance, "wanted:", cost);
-        throw new Error(`Insufficient funds for transaction. Account ${this.wallet.address}'s balance:, ${this.balance}, wanted: , ${cost}`);
+        this.logger.error("Insufficient funds for transaction", {account: this.wallet.address, balance: this.balance, wanted: cost});
+        throw new Error(`Insufficient funds for transaction. Account ${this.wallet.address}'s balance: ${this.balance}, wanted: ${cost}`);
       }
     }
 
     if (this.balance - BigInt(cost) < parseEther("0.1")) {
-      this.logger.warn("Warning: Wallet funds are running low, balance:", this.balance);
-      this.logger.warn("balance after tx:", this.balance - BigInt(cost));
+      this.logger.warn("Wallet funds are running low", {balance: this.balance});
     }
 
     return tx;
@@ -534,7 +529,7 @@ export class ChainManager {
             this.logger.warn("Network error detected, Error:", error, "waiting longer before retry...");
           } else {
             dynamicRetryDelay = retryDelayOnNetworkIssues;
-            this.logger.warn("Error detected, incrementing attempt counter. Error:", error);
+            this.logger.warn("Error detected, incrementing attempt counter", {error});
           }
           
           // If we've exhausted our attempts, throw the last error, this should be handled by the requester
