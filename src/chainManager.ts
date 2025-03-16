@@ -318,15 +318,6 @@ export class ChainManager {
       gasEstimate = await this.provider.estimateGas(tx);
     }
 
-    const gasPrice = (await this.provider.getFeeData()).gasPrice;
-    if (gasPrice === null) {
-      throw new Error("Failed to fetch gas price.");
-    }
-    const cost = gasEstimate * gasPrice;
-
-    // console.log(`Estimated Gas: ${gasEstimate}, Gas Price: ${formatEther(gasPrice)} ETH`);
-    // console.log(`Estimated Cost: ${formatEther(cost)} ETH`);
-
     if (tx.gasLimit === undefined) {
       tx.gasLimit = gasEstimate;
     } else if (getBigInt(tx.gasLimit!) < gasEstimate) {
@@ -336,11 +327,18 @@ export class ChainManager {
       console.warn("Warning: Gas limit is higher than estimated,", tx.gasLimit, ">", gasEstimate);
     }
 
-    if (tx.gasPrice === undefined) {
+    let fee = (tx.gasPrice !== undefined && tx.gasPrice !== null) ? tx.gasPrice : tx.maxFeePerGas;
+    if (fee === undefined || fee === null) {
+      const gasPrice = (await this.provider.getFeeData()).gasPrice;
+      if (gasPrice === null) {
+        throw new Error("Failed to fetch gas price.");
+      }
+
       tx.gasPrice = gasPrice;
-    } else if (getBigInt(tx.gasLimit!) < gasPrice) {
-      console.warn("Warning: Gas price is lower than recommended.", tx.gasPrice, "<", gasPrice);
+      fee = gasPrice;
     }
+
+    const cost = gasEstimate * getBigInt(fee);
 
     if (cost > this.balance) {
       // retry just in case it was missed
