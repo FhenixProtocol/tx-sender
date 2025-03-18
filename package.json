@@ -8,7 +8,9 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "rollup -c"
+    "build": "rollup -c",
+    "start": "TS_NODE_PROJECT=tsconfig.test.json TS_NODE_EXPERIMENTAL_SPECIFIER_RESOLUTION=node node --experimental-specifier-resolution=node --loader ts-node/esm ./testManager.ts",
+    "hardhat_node": "cd hardhat-eip1559 && npx hardhat node"
   },
   "exports": {
     ".": {
@@ -24,7 +26,11 @@
     "@rollup/plugin-node-resolve": "^15.3.0",
     "@rollup/plugin-typescript": "^12.1.1",
     "@types/node": "^22.10.0",
+    "axios": "^1.8.3",
+    "hardhat": "^2.22.19",
     "rollup": "^4.27.4",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
     "typescript": "^5.7.2"
   },
   "dependencies": {
