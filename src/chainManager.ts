@@ -539,6 +539,7 @@ export class ChainManager {
                   // The transactin was managed to be sent, even though it was timed out, 
                   // Since we verified that the transaction was sent with the current result, we can return it
                   this.logger.info("Transaction was not stuck in mempool, returning current result ");
+                  this.logSuccessUnstuckedTx(currentResult.txResponse);
                   return currentResult as { signedTx: string; txResponse: TransactionResponse };
                 }
             } else {
