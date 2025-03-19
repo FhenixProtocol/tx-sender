@@ -42,6 +42,7 @@ export interface FeeData {
   maxFeePerGas?: bigint;
   maxPriorityFeePerGas?: bigint;
   gasPrice?: bigint;
+  lastErrorIsTimeout?: boolean;
 }
 
 export class ChainManager {
@@ -266,8 +267,8 @@ export class ChainManager {
         throw new Error("Failed to fetch base fee");
       }
       // Return only EIP-1559 fields
-      const maxFeePerGas = Number(baseFee) + (Number(priorityFee) * multiplier);
       const maxPriorityFeePerGas = Number(priorityFee) * multiplier;
+      const maxFeePerGas = Number(baseFee) + maxPriorityFeePerGas;
       return {
         maxFeePerGas: BigInt(maxFeePerGas),
         maxPriorityFeePerGas: BigInt(maxPriorityFeePerGas),
@@ -420,8 +421,7 @@ export class ChainManager {
 
   private isTimeoutError(lastError: Error): boolean {
     return (lastError instanceof Error && lastError.message.toLowerCase().includes("timeout"))
-  }
-  
+  }  
 
   private async verifyExhausted(maxRetryAttempts: number | undefined, attempt: number, lastError: Error, nonceForThisTransaction: number | null, currentResult: { signedTx: string; txResponse?: TransactionResponse } | null): Promise<void> {
     if (maxRetryAttempts !== undefined && attempt > maxRetryAttempts) {
@@ -445,7 +445,11 @@ export class ChainManager {
    * @param config - Configuration options for the robust transaction sending
    * @param config.timeout - Time to wait for confirmation before retrying (ms) (default: 30000)
    * @param config.maxRetryAttempts - Maximum number of retry attempts (default: infinite)
-   * @param config.feeIncreaseFactor - Multiply gas price by this factor on each retry (default: 1.2)
+   * @param config.feeIncreaseFactor - Multiply gas price by this factor on each retry (default: 1.11 - 11% increase)
+   * In order to avoid the transaction being stuck in mempool, we increase the fee price by 11% on each retry
+   * We must use at least 10% increase, for both fee values (maxFeePerGas and maxPriorityFeePerGas), 
+   * Since the there is a rounding numbers error, we could miss the bare minimum fee to get the transaction included,
+   * so we chose to use 11% increase, to be safe.
    * @param config.retryDelay - Initial delay between retries in ms (default: 1000)
    * @param config.maxGasPrice - Maximum gas price willing to pay (in wei) (optional)
    * @param config.confirmations - Number of confirmations to wait for (default: 1)
@@ -530,9 +534,11 @@ export class ChainManager {
 
           dynamicRetryDelay = retryDelay;
           dynamicFeeIncreaseFactor = 1;
+          prevFee.lastErrorIsTimeout = false;
           if (this.isTimeoutError(lastError)) {
             // Check if transaction is stuck in mempool
             this.logger.debug("Timeout error detected, checking if transaction might be stuck in mempool");
+            prevFee.lastErrorIsTimeout = true;
             if (currentResult && currentResult.txResponse) {
                 if (await this.checkMempoolStuck(currentResult.txResponse)) {
                     this.logger.warn("Transaction stuck in mempool, retrying with higher fee...");
@@ -624,6 +630,10 @@ export class ChainManager {
       delete tx.maxFeePerGas;
       delete tx.maxPriorityFeePerGas;
 
+      if (prevFee.maxFeePerGas !== undefined && prevFee.maxPriorityFeePerGas !== undefined && prevFee.gasPrice !== undefined) {
+        this.logger.error("Somehow prevFee includes all fields", {prevFee});
+      }
+
       // This meant to distinguish between retries
       // In order to avoid replacement transaction being sent with the exact same fee or below the previous one
       // Which may result in execution revert with the following error: "Known transaction" or 
@@ -632,7 +642,7 @@ export class ChainManager {
         let maxFeePerGas = Math.floor(Number(feeData.maxFeePerGas) * retryMultiplier);
         let maxPriorityFeePerGas = Math.floor(Number(feeData.maxPriorityFeePerGas) * retryMultiplier);
       
-        if (prevFee.maxFeePerGas !== undefined && prevFee.maxPriorityFeePerGas !== undefined) {
+        if (prevFee.maxFeePerGas !== undefined && prevFee.maxPriorityFeePerGas !== undefined && prevFee.lastErrorIsTimeout) {
           maxFeePerGas = this.getBareMinFee(Number(prevFee.maxFeePerGas), retryMultiplier, maxFeePerGas);
           maxPriorityFeePerGas = this.getBareMinFee(Number(prevFee.maxPriorityFeePerGas), retryMultiplier, maxPriorityFeePerGas);
         }
@@ -642,7 +652,7 @@ export class ChainManager {
         prevFee = {maxFeePerGas: BigInt(maxFeePerGas), maxPriorityFeePerGas: BigInt(maxPriorityFeePerGas)};
       } else if ('gasPrice' in feeData && feeData.gasPrice !== undefined && feeData.gasPrice !== null) {
         let gasPrice = Math.floor(Number(feeData.gasPrice) * retryMultiplier);
-        if (prevFee.gasPrice !== undefined) {
+        if (prevFee.gasPrice !== undefined && prevFee.lastErrorIsTimeout) {
           gasPrice = this.getBareMinFee(Number(prevFee.gasPrice), retryMultiplier, gasPrice);
         }
         tx.gasPrice = BigInt(gasPrice);

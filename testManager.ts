@@ -6,8 +6,6 @@ import taskManager from "./TaskManager.json" assert { type: "json" };
 import { fundAccount } from "./tools/fundAccount";
 
 
-
-
 interface TransactionManagerConfigPublic {
     broadcast: boolean;
     defaultChain: string;
@@ -21,15 +19,6 @@ const txManagerConfig: TransactionManagerConfigPublic = {
     broadcast: true,
     defaultChain: "hardhat",
     chains: {
-        // "localfhenix": {
-        //     name: "localfhenix",
-        //     rpcUrl: "http://localhost:42069",
-        //     wsUrl: "ws://localhost:42070",
-        //     chainId: 420105,
-        //     fheosIp: "127.0.0.1",
-        //     fheosPort: 8449,
-        //     feeMultiplier: BigInt(5) / BigInt(10)
-        // }
         "hardhat": {
             name: "hardhat",
             rpcUrl: "http://localhost:8545",
@@ -159,9 +148,7 @@ async function main() {
     logger.info(`Balance: ${balance.toString()}`);
 
     // fund the wallet
-    if (chain === "localfhenix") {
-      await fundAccount(wallet.address, txManagerConfig.chains[chain].rpcUrl, provider);
-    }
+    await fundAccount(wallet.address, txManagerConfig.chains[chain].rpcUrl, provider);
     
     // verify the TxManager can coop with stuck txs
     await testStuckTxs(connectedContract, provider);
