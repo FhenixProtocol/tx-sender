@@ -30,7 +30,7 @@ export interface ChainManagerConfig {
 export interface TxConfig {
     timeout?: number;          // Timeout for each attempt in ms (default: 2*BLOCK_TIME)
     maxRetryAttempts?: number;      // Maximum number of retry attempts (default: infinite)
-    feeIncreaseFactor?: number; // Factor to increase gas by on retry (default: 1.2)
+    feeIncreaseFactor?: number; // Factor to increase gas by on retry (default: 1.11)
     retryDelay?: number;      // Delay between retries in ms (default: 0)
     retryDelayOnNetworkIssues?: number; // Delay between retries on network issues in ms (default: 500)
     maxGasPrice?: bigint;     // Maximum gas price the sender is willing to pay
