@@ -6,9 +6,12 @@
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "test": "cd tests && pnpm run test",
-    "test:external": "cd tests && pnpm run test:external",
     "build": "rollup -c",
     "start": "cd tests && pnpm run start",
     "hardhat_node": "cd tests/hardhat-eip1559 && npx hardhat node"
