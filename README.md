@@ -110,9 +110,17 @@ await txManager.sendTransaction(tx, "ethereum");
 ```
 
 ### Testing
+
 #### Setup 🛠️
-1. Open a shell and run a hardhat node:
-   ```zah
+
+1. Copy the environment files:
+   ```zsh
+   cp tests/.env.example tests/.env
+   cp hardhat-eip1559/.env.example hardhat-eip1559/.env
+   ```
+
+2. Open a shell and run a hardhat node:
+   ```zsh
    pnpm hardhat_node
    ```
 
