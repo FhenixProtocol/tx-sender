@@ -23,20 +23,26 @@ export interface ChainManagerConfig {
   chainId?: number;                  // Optional chain ID for Ethereum
   broadcast?: boolean;               // Whether to automatically broadcast transactions
   privateKey: string;                // Ethereum private key
-  feeMultiplier?: bigint;            // Fee multiplier for gas estimation
+  feeMultiplier?: number;            // Fee multiplier for gas estimation
   blockTag?: string;                 // Block tag to use for transaction count
 }
 
 export interface TxConfig {
     timeout?: number;          // Timeout for each attempt in ms (default: 2*BLOCK_TIME)
     maxRetryAttempts?: number;      // Maximum number of retry attempts (default: infinite)
-    gasIncreaseFactor?: number; // Factor to increase gas by on retry (default: 1.2)
-    maxIncreaseFactor?: number; // Maximum gas increase factor (default: gasIncreaseFactor)
+    feeIncreaseFactor?: number; // Factor to increase gas by on retry (default: 1.11)
     retryDelay?: number;      // Delay between retries in ms (default: 0)
     retryDelayOnNetworkIssues?: number; // Delay between retries on network issues in ms (default: 500)
     maxGasPrice?: bigint;     // Maximum gas price the sender is willing to pay
     confirmations?: number;   // Number of confirmations to wait for
     useExponentialBackoff?: boolean; // Use exponential backoff instead of linear (default: true)
+}
+
+export interface FeeData {
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+  gasPrice?: bigint;
+  lastErrorIsTimeout?: boolean;
 }
 
 export class ChainManager {
@@ -48,11 +54,11 @@ export class ChainManager {
   private broadcast: boolean;
   private chainId: number | undefined = undefined;
   private balance: bigint = BigInt(0);
-  private feeMultiplier: bigint = BigInt(12) / BigInt(10);
+  private chainSpecificFeeMultiplier: number = 1.1;
   private ready: boolean = false;
   private logger: Logger;
   constructor(config: ChainManagerConfig, logger: Logger) {
-    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = BigInt(12) / BigInt(10)} = config;
+    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = 1.1} = config;
 
     if (!privateKey || !rpcUrl) {
       throw new Error("Private key and RPC URL are required.");
@@ -61,7 +67,7 @@ export class ChainManager {
     this.wallet = new Wallet(privateKey, this.provider);
     this.broadcast = broadcast;
     this.chainId = chainId;
-    this.feeMultiplier = feeMultiplier;
+    this.chainSpecificFeeMultiplier = feeMultiplier;
     this.logger = logger;
 
     // Fetch initial wallet balance
@@ -112,7 +118,7 @@ export class ChainManager {
         const tx = await this.sendTransaction(dummyTx, {
           timeout: 2*BLOCK_TIME,
           maxRetryAttempts: undefined,
-          gasIncreaseFactor: 2,
+          feeIncreaseFactor: 1.11,
           retryDelay: 0,
         });
         if (tx.txResponse) {
@@ -247,7 +253,7 @@ export class ChainManager {
     );
   }
 
-  private async getFeeForChain(multiplier: bigint) {
+  private async getFeeForChain(multiplier: number) {
     try {
       // Attempt EIP-1559 fee estimation
       const priorityFee = BigInt(await this.provider.send("eth_maxPriorityFeePerGas", []));
@@ -261,9 +267,11 @@ export class ChainManager {
         throw new Error("Failed to fetch base fee");
       }
       // Return only EIP-1559 fields
+      const maxPriorityFeePerGas = Number(priorityFee) * multiplier;
+      const maxFeePerGas = Number(baseFee) + maxPriorityFeePerGas;
       return {
-        maxFeePerGas: baseFee + (priorityFee * multiplier),
-        maxPriorityFeePerGas: priorityFee * multiplier,
+        maxFeePerGas: BigInt(maxFeePerGas),
+        maxPriorityFeePerGas: BigInt(maxPriorityFeePerGas),
       }
     } catch (error) {
       if (this.isMethodNotFound(error) || this.checkForMessageInError(error, "Failed to fetch base fee")) {
@@ -271,7 +279,7 @@ export class ChainManager {
         const feeData = await this.provider.getFeeData();
         if (!feeData.gasPrice) throw new Error("Failed to get gas price");
         return {
-          gasPrice: feeData.gasPrice * multiplier,
+          gasPrice: BigInt(Number(feeData.gasPrice) * multiplier),
         };
       }
         throw error;
@@ -284,25 +292,27 @@ export class ChainManager {
    * This will multiply the gas price/maxFeePerGas/maxPriorityFeePerGas by the increase factor
    * @param tx - The transaction to apply the increase factor to
    * @param increaseFactor - The factor to increase the gas price by
+   * @param prevFee - The previous fee data
    * @returns The transaction with the increased gas price
    */
-  private async applyGasIncreaseFactor(
+  private async applyFeeIncreaseFactor(
       tx: Partial<TransactionRequest>,
-      increaseFactor: number
+      increaseFactor: number,
+      prevFee: FeeData
   ): Promise<Partial<TransactionRequest>> {
       if (increaseFactor <= 1) return tx;
 
-      const multiplier = BigInt(Math.floor(increaseFactor * 100)) / BigInt(100);
-      const feeData = await this.getFeeForChain(this.feeMultiplier);
+      const retryMultiplier = Math.floor(increaseFactor * 100) / 100;
+      const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier);
       const newTx = { ...tx }; // Create a new object to avoid modifying the input
-      this.setGasFees(newTx, feeData, multiplier);
+      this.setGasFees(newTx, feeData, prevFee, retryMultiplier);
       return newTx;
   }
 
   /**
    * Estimates the gas cost for a transaction and validates the wallet balance.
    */
-  private async validateFunds(tx: Partial<TransactionRequest>): Promise<Partial<TransactionRequest>> {
+  private async validateFunds(tx: Partial<TransactionRequest>, prevFee: FeeData): Promise<Partial<TransactionRequest>> {
     let gasEstimate;
     if (tx.gasLimit === undefined) {
       const txWithLimit = { ...tx, gasLimit: 1_000_000 };
@@ -311,11 +321,11 @@ export class ChainManager {
       // In the worst case, the gas limit will be increased to the estimated value - dynamically
       gasEstimate = await this.provider.estimateGas({...txWithLimit, from: this.wallet.address});
       tx.gasLimit = gasEstimate * 110n / 100n;
-      const feeData = await this.getFeeForChain(this.feeMultiplier);
-      this.setGasFees(tx, feeData);
+      const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier);
+      this.setGasFees(tx, feeData, prevFee);
     } else {
       this.logger.info("Using given gaslimit for estimation", {gasLimit: tx.gasLimit});
-      gasEstimate = await this.provider.estimateGas(tx);
+      gasEstimate = await this.provider.estimateGas({...tx, from: this.wallet.address});
     }
 
     if (tx.gasLimit === undefined) {
@@ -367,12 +377,13 @@ export class ChainManager {
    * Sends a transaction: Signs and optionally broadcasts it.
    */
   private async _sendTransaction(
-    tx: Partial<TransactionRequest>
+    tx: Partial<TransactionRequest>,
+    prevFee: FeeData
   ): Promise<{ signedTx: string; txResponse?: TransactionResponse }> {
     this.addChainId(tx);
 
     // Validate balance and estimate gas
-    tx = await this.validateFunds(tx);
+    tx = await this.validateFunds(tx, prevFee);
 
     // Sign the transaction
     const signedTx = await this.signTransaction(tx);
@@ -401,11 +412,16 @@ export class ChainManager {
   private async checkForStuckTransaction(currentResult: { signedTx: string; txResponse?: TransactionResponse } | null, lastError: Error): Promise<boolean> {
     if (currentResult && currentResult.txResponse && lastError instanceof Error && lastError.message.toLowerCase().includes("timeout")) {
       // Check if transaction is stuck in mempool
+      this.logger.debug("Checking for stuck transaction", {txResponse: currentResult.txResponse});
       return await this.checkMempoolStuck(currentResult.txResponse)
     }   
 
     return false;
   }
+
+  private isTimeoutError(lastError: Error): boolean {
+    return (lastError instanceof Error && lastError.message.toLowerCase().includes("timeout"))
+  }  
 
   private async verifyExhausted(maxRetryAttempts: number | undefined, attempt: number, lastError: Error, nonceForThisTransaction: number | null, currentResult: { signedTx: string; txResponse?: TransactionResponse } | null): Promise<void> {
     if (maxRetryAttempts !== undefined && attempt > maxRetryAttempts) {
@@ -419,7 +435,7 @@ export class ChainManager {
    * 1. Send the transaction with initial gas settings
    * 2. Wait for confirmation with the specified timeout
    * 3. If the transaction gets stuck in mempool:
-   *    - Retry with increased gas price using gasIncreaseFactor
+   *    - Retry with increased gas price using feeIncreaseFactor
    *    - Keep retrying with exponentially increasing gas until either:
    *      a) Transaction is confirmed
    *      b) Max attempts reached (if specified)
@@ -428,8 +444,12 @@ export class ChainManager {
    * @param tx - The transaction to send
    * @param config - Configuration options for the robust transaction sending
    * @param config.timeout - Time to wait for confirmation before retrying (ms) (default: 30000)
-   * @param config.maxAttempts - Maximum number of retry attempts (default: infinite)
-   * @param config.gasIncreaseFactor - Multiply gas price by this factor on each retry (default: 1.2)
+   * @param config.maxRetryAttempts - Maximum number of retry attempts (default: infinite)
+   * @param config.feeIncreaseFactor - Multiply gas price by this factor on each retry (default: 1.11 - 11% increase)
+   * In order to avoid the transaction being stuck in mempool, we increase the fee price by 11% on each retry
+   * We must use at least 10% increase, for both fee values (maxFeePerGas and maxPriorityFeePerGas), 
+   * Since the there is a rounding numbers error, we could miss the bare minimum fee to get the transaction included,
+   * so we chose to use 11% increase, to be safe.
    * @param config.retryDelay - Initial delay between retries in ms (default: 1000)
    * @param config.maxGasPrice - Maximum gas price willing to pay (in wei) (optional)
    * @param config.confirmations - Number of confirmations to wait for (default: 1)
@@ -451,8 +471,7 @@ export class ChainManager {
     const {
         timeout = 2*BLOCK_TIME,
         maxRetryAttempts = undefined,
-        gasIncreaseFactor = 1.1,
-        maxIncreaseFactor = gasIncreaseFactor,
+        feeIncreaseFactor = 1.11,
         retryDelay = 0,
         retryDelayOnNetworkIssues = 500,
         confirmations = 1,
@@ -463,12 +482,12 @@ export class ChainManager {
 
     // Should only be set if it was timed out, suspected as stuck in mempool
     let dynamicFeeIncreaseFactor = 1;
-
     let attempt = 1;
     let lastError: Error | null = null;
     let nonceForThisTransaction: number | null = null;
     let currentResult: { signedTx: string; txResponse?: TransactionResponse } | null = null;
     let isUserProvidedNonce = false;
+    let prevFee: FeeData = { maxFeePerGas: undefined, maxPriorityFeePerGas: undefined, gasPrice: undefined};
     
     // If the nonce is provided by the user, use it
     if (tx.nonce !== undefined) {
@@ -476,7 +495,7 @@ export class ChainManager {
       isUserProvidedNonce = true;
     }
 
-    while (maxRetryAttempts === undefined || attempt <= maxRetryAttempts) {
+    while (maxRetryAttempts === undefined || attempt <= maxRetryAttempts + 1) {
         try {
             if (attempt > 1) {
                 // will be skipped if it is the very first attempt
@@ -489,11 +508,11 @@ export class ChainManager {
                     tx.nonce = nonceForThisTransaction;
                 }
 
-                tx = await this.prepareForRetry(tx, backoffDelay, dynamicFeeIncreaseFactor, maxIncreaseFactor, config.maxGasPrice, attempt - 1);
+                tx = await this.prepareForRetry(tx, backoffDelay, dynamicFeeIncreaseFactor, config.maxGasPrice, attempt - 1, prevFee);
             }
             
             // Send the transaction, writing the transaction to the mempool
-            currentResult = await this._sendTransaction(tx);
+            currentResult = await this._sendTransaction(tx, prevFee);
 
             if (!currentResult.txResponse) {
                 throw new Error("Transaction was not broadcast");
@@ -515,13 +534,29 @@ export class ChainManager {
 
           dynamicRetryDelay = retryDelay;
           dynamicFeeIncreaseFactor = 1;
-          if (await this.checkForStuckTransaction(currentResult, lastError)) {
-            this.logger.warn("Transaction stuck in mempool, retrying with higher fee...");
-            dynamicFeeIncreaseFactor = gasIncreaseFactor;
+          prevFee.lastErrorIsTimeout = false;
+          if (this.isTimeoutError(lastError)) {
+            // Check if transaction is stuck in mempool
+            this.logger.debug("Timeout error detected, checking if transaction might be stuck in mempool");
+            prevFee.lastErrorIsTimeout = true;
+            if (currentResult && currentResult.txResponse) {
+                if (await this.checkMempoolStuck(currentResult.txResponse)) {
+                    this.logger.warn("Transaction stuck in mempool, retrying with higher fee...");
+                    dynamicFeeIncreaseFactor = feeIncreaseFactor;
+                } else {
+                  // The transactin was managed to be sent, even though it was timed out, 
+                  // Since we verified that the transaction was sent with the current result, we can return it
+                  this.logger.info("Transaction was not stuck in mempool, returning current result ");
+                  this.logSuccessUnstuckedTx(currentResult.txResponse);
+                  return currentResult as { signedTx: string; txResponse: TransactionResponse };
+                }
+            } else {
+                this.logger.warn("Transaction was not stuck in mempool, but timed out with no txResponse");
+            }
           } else if (verifyNonceTooLow(error, tx, nonceForThisTransaction)) {
             // Check if error indicates nonce too low, force nonce sync by setting nonce to null
             this.logger.warn("Nonce too low detected, forcing nonce sync...");
-            tx.nonce = null;
+            tx.nonce = undefined;
             nonceForThisTransaction = null;
           } else if (isNetworkError(error)) {
             dynamicRetryDelay = retryDelayOnNetworkIssues;
@@ -541,22 +576,20 @@ export class ChainManager {
     throw lastError || new Error("Failed to send transaction");
   }
 
-  private async prepareForRetry(tx: Partial<TransactionRequest>, backoffDelay: number, gasIncreaseFactor: number, gasIncreaseFactorMax: number, maxGasPrice: bigint | undefined, attempt: number): Promise<Partial<TransactionRequest>> {
+  private async prepareForRetry(tx: Partial<TransactionRequest>, backoffDelay: number, feeIncreaseFactor: number, maxGasPrice: bigint | undefined, retryCount: number, prevFee: FeeData): Promise<Partial<TransactionRequest>> {
     if (backoffDelay > 0) {
         await new Promise(resolve => setTimeout(resolve, backoffDelay));
     }
 
-    // First validate the transaction with current gas prices
-    tx = await this.validateFunds(tx);
+    // First validate the transaction with current gas prices, 
+    // the prevFee here should not be used, since we already have gasLimit in retries
+    tx = await this.validateFunds(tx, prevFee);
     
     // Calculate increase factor for better mempool acceptance
-    let increaseFactor = Math.pow(gasIncreaseFactor, attempt);
-    if (increaseFactor > gasIncreaseFactorMax) {
-      increaseFactor = gasIncreaseFactorMax;
-    }
+    let increaseFactor = Math.pow(feeIncreaseFactor, retryCount);
 
     // Then apply the gas increase on top of the validated transaction
-    tx = await this.applyGasIncreaseFactor(tx, increaseFactor);
+    tx = await this.applyFeeIncreaseFactor(tx, increaseFactor, prevFee); 
 
     // Check against max gas price if specified
     if (maxGasPrice) {
@@ -566,33 +599,64 @@ export class ChainManager {
         }
     }
 
-    this.logger.warn(`Retrying transaction with ${increaseFactor}x gas price`, {attempt: attempt + 1});
+    this.logger.warn(`Retrying transaction with ${increaseFactor}x gas price`, {attempt: retryCount + 1});
 
     return tx;
+  }
+
+  private getBareMinFee(prevFee: number, retryMultiplier: number, newFee: number): number {
+    const bareMinFee = prevFee * retryMultiplier; // the minimum fee that can be used to replace the previous attempt
+    if (bareMinFee > newFee) {
+      return bareMinFee;
+    }
+    return newFee;
   }
 
   /**
    * Helper function to clear and set gas price fields consistently
    * @param tx Transaction to update
    * @param feeData Fee data containing either EIP-1559 or legacy gas prices
-   * @param multiplier Optional multiplier to apply to the fees
+   * @param prevFee Previous fee data
+   * @param retryMultiplier Optional multiplier to apply to the fees
    */
   private setGasFees(
       tx: Partial<TransactionRequest>, 
-      feeData: { maxFeePerGas?: bigint, maxPriorityFeePerGas?: bigint, gasPrice?: bigint },
-      multiplier: bigint = BigInt(1)
+      feeData: FeeData,
+      prevFee: FeeData,
+      retryMultiplier: number = 1,
   ): void {
       // Clear existing gas fields
       delete tx.gasPrice;
       delete tx.maxFeePerGas;
       delete tx.maxPriorityFeePerGas;
 
+      if (prevFee.maxFeePerGas !== undefined && prevFee.maxPriorityFeePerGas !== undefined && prevFee.gasPrice !== undefined) {
+        this.logger.error("Somehow prevFee includes all fields", {prevFee});
+      }
+
+      // This meant to distinguish between retries
+      // In order to avoid replacement transaction being sent with the exact same fee or below the previous one
+      // Which may result in execution revert with the following error: "Known transaction" or 
       // Apply either EIP-1559 or legacy fees
-      if ('maxFeePerGas' in feeData && feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
-          tx.maxFeePerGas = feeData.maxFeePerGas * multiplier;
-          tx.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas * multiplier;
-      } else if ('gasPrice' in feeData && feeData.gasPrice) {
-          tx.gasPrice = feeData.gasPrice * multiplier;
+      if ('maxFeePerGas' in feeData && feeData.maxFeePerGas !== undefined && feeData.maxPriorityFeePerGas !== undefined) {
+        let maxFeePerGas = Math.floor(Number(feeData.maxFeePerGas) * retryMultiplier);
+        let maxPriorityFeePerGas = Math.floor(Number(feeData.maxPriorityFeePerGas) * retryMultiplier);
+      
+        if (prevFee.maxFeePerGas !== undefined && prevFee.maxPriorityFeePerGas !== undefined && prevFee.lastErrorIsTimeout) {
+          maxFeePerGas = this.getBareMinFee(Number(prevFee.maxFeePerGas), retryMultiplier, maxFeePerGas);
+          maxPriorityFeePerGas = this.getBareMinFee(Number(prevFee.maxPriorityFeePerGas), retryMultiplier, maxPriorityFeePerGas);
+        }
+
+        tx.maxFeePerGas = BigInt(maxFeePerGas);
+        tx.maxPriorityFeePerGas = BigInt(maxPriorityFeePerGas);
+        prevFee = {maxFeePerGas: BigInt(maxFeePerGas), maxPriorityFeePerGas: BigInt(maxPriorityFeePerGas)};
+      } else if ('gasPrice' in feeData && feeData.gasPrice !== undefined && feeData.gasPrice !== null) {
+        let gasPrice = Math.floor(Number(feeData.gasPrice) * retryMultiplier);
+        if (prevFee.gasPrice !== undefined && prevFee.lastErrorIsTimeout) {
+          gasPrice = this.getBareMinFee(Number(prevFee.gasPrice), retryMultiplier, gasPrice);
+        }
+        tx.gasPrice = BigInt(gasPrice);
+        prevFee = {gasPrice: BigInt(gasPrice)};
       }
   }
 
