@@ -8,14 +8,15 @@
             "skipFiles": [
                 "<node_internals>/**"
             ],
-            "program": "${workspaceFolder}/testManager.ts",
+            "program": "${workspaceFolder}/tests/testManager.ts",
             "runtimeArgs": [
                 "--no-warnings",
                 "--loader",
                 "ts-node/esm"
             ],
+            "envFile": "${workspaceFolder}/tests/.env",
             "env": {
-                "TS_NODE_PROJECT": "tsconfig.test.json",
+                "TS_NODE_PROJECT": "${workspaceFolder}/tests/tsconfig.test.json",
                 "TS_NODE_EXPERIMENTAL_SPECIFIER_RESOLUTION": "node",
                 "NODE_OPTIONS": "--experimental-specifier-resolution=node"
             },

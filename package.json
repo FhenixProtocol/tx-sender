@@ -7,10 +7,11 @@
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "cd tests && pnpm run test",
+    "test:external": "cd tests && pnpm run test:external",
     "build": "rollup -c",
-    "start": "TS_NODE_PROJECT=tsconfig.test.json TS_NODE_EXPERIMENTAL_SPECIFIER_RESOLUTION=node node --experimental-specifier-resolution=node --loader ts-node/esm ./testManager.ts",
-    "hardhat_node": "cd hardhat-eip1559 && npx hardhat node"
+    "start": "cd tests && pnpm run start",
+    "hardhat_node": "cd tests/hardhat-eip1559 && npx hardhat node"
   },
   "exports": {
     ".": {

@@ -1,0 +1,27 @@
+{
+  "name": "tx-sender-tests",
+  "version": "1.0.0",
+  "description": "Tests for tx-sender",
+  "type": "module",
+  "scripts": {
+    "start": "TS_NODE_PROJECT=tsconfig.test.json TS_NODE_EXPERIMENTAL_SPECIFIER_RESOLUTION=node node --experimental-specifier-resolution=node --loader ts-node/esm ./testManager.ts",
+    "hardhat_node": "cd hardhat-eip1559 && npx hardhat node",
+    "test": "cd hardhat-eip1559 && npx hardhat test",
+    "test:external": "cd hardhat-eip1559 && npx hardhat test --network externalNode"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "axios": "^1.8.3",
+    "hardhat": "^2.22.19",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "@types/winston": "^2.4.4",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.4",
+    "winston": "^3.17.0"
+  }
+} 

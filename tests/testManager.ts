@@ -1,5 +1,5 @@
 import { Contract, ethers, TransactionRequest } from "ethers";
-import { TransactionManager } from "./src/index";
+import { TransactionManager } from "../src/index";
 import baseLogger from "./tools/logger.js";
 import { Logger } from "winston";
 import taskManager from "./TaskManager.json" assert { type: "json" };
@@ -26,6 +26,7 @@ const txManagerConfig: TransactionManagerConfigPublic = {
             chainId: 420105,
             fheosIp: "127.0.0.1",
             fheosPort: 8449,
+            privateKey: process.env.HARDHAT_PRIVATE_KEY,
         }
     },
     logger: logger
