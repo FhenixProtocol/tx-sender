@@ -32,10 +32,12 @@ export interface TxConfig {
     maxRetryAttempts?: number;      // Maximum number of retry attempts (default: infinite)
     feeIncreaseFactor?: number; // Factor to increase gas by on retry (default: 1.11)
     retryDelay?: number;      // Delay between retries in ms (default: 0)
-    retryDelayOnNetworkIssues?: number; // Delay between retries on network issues in ms (default: 500)
+    retryDelayOnNetworkIssues?: number; // Delay between retries on network issues in ms (default: 250)
     maxGasPrice?: bigint;     // Maximum gas price the sender is willing to pay
     confirmations?: number;   // Number of confirmations to wait for
     useExponentialBackoff?: boolean; // Use exponential backoff instead of linear (default: true)
+    maxDelayAllowed?: number; // Maximum delay allowed in ms (default: 10000) we can also pass undefined which means no limit
+    exponentialBackoffExponent?: number; // Exponent for exponential backoff (default: 10)
 }
 
 export interface FeeData {
@@ -132,7 +134,7 @@ export class ChainManager {
       throw new Error("Nonce is not synced, this could cause issues with the nonce sync, failed to release stuck transactions");
     }
 
-    this.logger.info("chainManager %s is ready", {chainId: this.chainId});
+    this.logger.info("chainManager is ready", {chainId: this.chainId});
     this.ready = true;
   }
 
@@ -324,7 +326,7 @@ export class ChainManager {
       const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier);
       this.setGasFees(tx, feeData, prevFee);
     } else {
-      this.logger.info("Using given gaslimit for estimation", {gasLimit: tx.gasLimit});
+      this.logger.debug("Using given gaslimit for estimation", {gasLimit: tx.gasLimit});
       gasEstimate = await this.provider.estimateGas({...tx, from: this.wallet.address});
     }
 
@@ -409,18 +411,8 @@ export class ChainManager {
       }
   };
 
-  private async checkForStuckTransaction(currentResult: { signedTx: string; txResponse?: TransactionResponse } | null, lastError: Error): Promise<boolean> {
-    if (currentResult && currentResult.txResponse && lastError instanceof Error && lastError.message.toLowerCase().includes("timeout")) {
-      // Check if transaction is stuck in mempool
-      this.logger.debug("Checking for stuck transaction", {txResponse: currentResult.txResponse});
-      return await this.checkMempoolStuck(currentResult.txResponse)
-    }   
-
-    return false;
-  }
-
   private isTimeoutError(lastError: Error): boolean {
-    return (lastError instanceof Error && lastError.message.toLowerCase().includes("timeout"))
+    return (lastError instanceof Error && (lastError.message.toLowerCase().includes("timeout") || lastError.message.toLowerCase().includes("timed out")))
   }  
 
   private async verifyExhausted(maxRetryAttempts: number | undefined, attempt: number, lastError: Error, nonceForThisTransaction: number | null, currentResult: { signedTx: string; txResponse?: TransactionResponse } | null): Promise<void> {
@@ -473,9 +465,11 @@ export class ChainManager {
         maxRetryAttempts = undefined,
         feeIncreaseFactor = 1.11,
         retryDelay = 0,
-        retryDelayOnNetworkIssues = 500,
+        retryDelayOnNetworkIssues = 250,
         confirmations = 1,
-        useExponentialBackoff = true
+        useExponentialBackoff = true,
+        maxDelayAllowed = 10000,
+        exponentialBackoffExponent = 15
     } = config;
 
     let dynamicRetryDelay = retryDelay;
@@ -501,7 +495,10 @@ export class ChainManager {
                 // will be skipped if it is the very first attempt
                 // Prepare for retry attempts
                 // Start from multiplier of 1 (attempt = 2 multiplier = 1) and then grow exponentially
-                const backoffDelay = useExponentialBackoff ? dynamicRetryDelay * Math.pow(2, attempt - 2) : dynamicRetryDelay;
+                let backoffDelay = useExponentialBackoff ? dynamicRetryDelay * Math.pow(2, Math.ceil((attempt - 1) / exponentialBackoffExponent)) : dynamicRetryDelay;
+                if (maxDelayAllowed !== undefined && backoffDelay > maxDelayAllowed) {
+                  backoffDelay = maxDelayAllowed;
+                }
 
                 // update the nonce for this transaction, only if it's not provided by the user and it's not null
                 if (!isUserProvidedNonce && nonceForThisTransaction !== null) {
@@ -536,6 +533,7 @@ export class ChainManager {
           dynamicFeeIncreaseFactor = 1;
           prevFee.lastErrorIsTimeout = false;
           if (this.isTimeoutError(lastError)) {
+            dynamicRetryDelay = retryDelayOnNetworkIssues;
             // Check if transaction is stuck in mempool
             this.logger.debug("Timeout error detected, checking if transaction might be stuck in mempool");
             prevFee.lastErrorIsTimeout = true;
@@ -543,6 +541,7 @@ export class ChainManager {
                 if (await this.checkMempoolStuck(currentResult.txResponse)) {
                     this.logger.warn("Transaction stuck in mempool, retrying with higher fee...");
                     dynamicFeeIncreaseFactor = feeIncreaseFactor;
+                    dynamicRetryDelay = retryDelay;
                 } else {
                   // The transactin was managed to be sent, even though it was timed out, 
                   // Since we verified that the transaction was sent with the current result, we can return it
@@ -561,7 +560,7 @@ export class ChainManager {
           } else if (isNetworkError(error)) {
             dynamicRetryDelay = retryDelayOnNetworkIssues;
             // Handle network errors by waiting longer before retrying
-            this.logger.warn("Network error detected, Error:", error, "waiting longer before retry...");
+            this.logger.warn("Network error detected, waiting longer before retry...", {error});
           } else {
             dynamicRetryDelay = retryDelayOnNetworkIssues;
             this.logger.warn("Error detected, incrementing attempt counter", {error});
@@ -599,7 +598,11 @@ export class ChainManager {
         }
     }
 
-    this.logger.warn(`Retrying transaction with ${increaseFactor}x gas price`, {attempt: retryCount + 1});
+    if (increaseFactor > 1) {
+      this.logger.warn(`Retrying transaction with ${increaseFactor}x gas price`, {attempt: retryCount + 1});
+    } else {
+      this.logger.debug(`Retrying transaction with ${increaseFactor}x gas price`, {attempt: retryCount + 1});
+    }
 
     return tx;
   }
