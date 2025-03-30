@@ -317,7 +317,7 @@ export class ChainManager {
   private async validateFunds(tx: Partial<TransactionRequest>, prevFee: FeeData): Promise<Partial<TransactionRequest>> {
     let gasEstimate;
     if (tx.gasLimit === undefined) {
-      const txWithLimit = { ...tx, gasLimit: 1_000_000 };
+      const txWithLimit = { ...tx, gasLimit: 5_000_000 };
       // Since the gas is being estimated, with binary search, we can use a relative low gas limit
       // to avoid wasting gas on the estimation itself
       // In the worst case, the gas limit will be increased to the estimated value - dynamically
