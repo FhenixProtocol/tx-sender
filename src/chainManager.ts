@@ -497,7 +497,7 @@ export class ChainManager {
       isUserProvidedNonce = true;
     }
 
-    // Wait until the number of transactions in progress is less than the max number of transactions at once
+    // We won't continue if we already have reached the max active transactions at once
     while (this.activeTxsCounter > this.maxTxsAtOnce) {
       await new Promise(resolve => setTimeout(resolve, 0));
     }
