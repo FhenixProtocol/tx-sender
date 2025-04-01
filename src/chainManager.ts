@@ -208,7 +208,7 @@ export class ChainManager {
    * Prepares and signs a transaction.
    */
   public async signTransaction(tx: Partial<TransactionRequest>): Promise<string> {
-    this.addChainId(tx);
+    tx = this.addChainId(tx);
 
     // Only set nonce if not provided by user
     if (tx.nonce === undefined) {
