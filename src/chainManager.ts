@@ -61,7 +61,7 @@ export class ChainManager {
   private ready: boolean = false;
   private logger: Logger;
   private maxTxsAtOnce: number = 50;
-  private currentTxCounter: number = 0;
+  private activeTxsCounter: number = 0;
   constructor(config: ChainManagerConfig, logger: Logger) {
     const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = 1.1, maxTxsAtOnce = 50} = config;
 
@@ -75,7 +75,7 @@ export class ChainManager {
     this.chainSpecificFeeMultiplier = feeMultiplier;
     this.logger = logger;
     this.maxTxsAtOnce = maxTxsAtOnce;
-    this.currentTxCounter = 0;
+    this.activeTxsCounter = 0;
 
     this.logger.info("ChainManager initialized", {chainId: this.chainId, maxTxsAtOnce: this.maxTxsAtOnce});
     
@@ -498,12 +498,12 @@ export class ChainManager {
     }
 
     // Wait until the number of transactions in progress is less than the max number of transactions at once
-    while (this.currentTxCounter > this.maxTxsAtOnce) {
+    while (this.activeTxsCounter > this.maxTxsAtOnce) {
       await new Promise(resolve => setTimeout(resolve, 0));
     }
     
     try {
-      this.currentTxCounter += 1;
+      this.activeTxsCounter += 1;
       while (maxRetryAttempts === undefined || attempt <= maxRetryAttempts + 1) {
           try {
               if (attempt > 1) {
@@ -587,7 +587,7 @@ export class ChainManager {
           }
       }
   } finally {
-    this.currentTxCounter -= 1;
+    this.activeTxsCounter -= 1;
   }
     throw lastError || new Error("Failed to send transaction");
   }
