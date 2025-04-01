@@ -74,8 +74,8 @@ export class ChainManager {
     this.chainId = chainId;
     this.chainSpecificFeeMultiplier = feeMultiplier;
     this.logger = logger;
-    this.currentTxCounter = 0;
     this.maxTxsAtOnce = maxTxsAtOnce;
+    this.currentTxCounter = 0;
 
     this.logger.info("ChainManager initialized", {chainId: this.chainId, maxTxsAtOnce: this.maxTxsAtOnce});
     
