@@ -3,7 +3,7 @@ import { formatEther, parseEther, getBigInt } from "ethers";
 import { Logger } from "winston";
 const BLOCK_TIME = 13000; // 13 seconds, typical Ethereum block time is 12-13 seconds
 
-function verifyNonceTooLow(error: unknown, tx: Partial<TransactionRequest>, nonceForThisTransaction: number | null): boolean {
+function verifyNonceTooLow(error: unknown, tx: Partial<TransactionRequest>): boolean {
     return (error instanceof Error && (error.message.includes("nonce too low") || error.message.includes("NONCE_EXPIRED")));
 }
 
@@ -25,6 +25,7 @@ export interface ChainManagerConfig {
   privateKey: string;                // Ethereum private key
   feeMultiplier?: number;            // Fee multiplier for gas estimation
   blockTag?: string;                 // Block tag to use for transaction count
+  maxTxsAtOnce?: number;             // Maximum number of transactions to send at once
 }
 
 export interface TxConfig {
@@ -59,8 +60,10 @@ export class ChainManager {
   private chainSpecificFeeMultiplier: number = 1.1;
   private ready: boolean = false;
   private logger: Logger;
+  private maxTxsAtOnce: number = 50;
+  private currentTxCounter: number = 0;
   constructor(config: ChainManagerConfig, logger: Logger) {
-    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = 1.1} = config;
+    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = 1.1, maxTxsAtOnce = 50} = config;
 
     if (!privateKey || !rpcUrl) {
       throw new Error("Private key and RPC URL are required.");
@@ -71,7 +74,11 @@ export class ChainManager {
     this.chainId = chainId;
     this.chainSpecificFeeMultiplier = feeMultiplier;
     this.logger = logger;
+    this.currentTxCounter = 0;
+    this.maxTxsAtOnce = maxTxsAtOnce;
 
+    this.logger.info("ChainManager initialized", {chainId: this.chainId, maxTxsAtOnce: this.maxTxsAtOnce});
+    
     // Fetch initial wallet balance
     this.syncBalance().catch(err => {
       this.logger.error("Failed to fetch initial balance:", err);
@@ -220,13 +227,14 @@ export class ChainManager {
   /**
    * Adds the chain ID to the transaction if not set.
    */
-  private addChainId(tx: Partial<TransactionRequest>): void {
+  private addChainId(tx: Partial<TransactionRequest>): Partial<TransactionRequest> {
     if (tx.chainId === undefined) {
       tx.chainId = this.chainId;
     }
     if (tx.chainId === undefined) {
       throw Error("chainId is required");
     }
+    return tx;
   }
 
   private checkForMessageInError(error: unknown, message: string): boolean {
@@ -382,7 +390,7 @@ export class ChainManager {
     tx: Partial<TransactionRequest>,
     prevFee: FeeData
   ): Promise<{ signedTx: string; txResponse?: TransactionResponse }> {
-    this.addChainId(tx);
+    tx = this.addChainId(tx);
 
     // Validate balance and estimate gas
     tx = await this.validateFunds(tx, prevFee);
@@ -489,89 +497,98 @@ export class ChainManager {
       isUserProvidedNonce = true;
     }
 
-    while (maxRetryAttempts === undefined || attempt <= maxRetryAttempts + 1) {
-        try {
-            if (attempt > 1) {
-                // will be skipped if it is the very first attempt
-                // Prepare for retry attempts
-                // Start from multiplier of 1 (attempt = 2 multiplier = 1) and then grow exponentially
-                let backoffDelay = useExponentialBackoff ? dynamicRetryDelay * Math.pow(2, Math.ceil((attempt - 1) / exponentialBackoffExponent)) : dynamicRetryDelay;
-                if (maxDelayAllowed !== undefined && backoffDelay > maxDelayAllowed) {
-                  backoffDelay = maxDelayAllowed;
-                }
+    // Wait until the number of transactions in progress is less than the max number of transactions at once
+    while (this.currentTxCounter > this.maxTxsAtOnce) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    
+    try {
+      this.currentTxCounter += 1;
+      while (maxRetryAttempts === undefined || attempt <= maxRetryAttempts + 1) {
+          try {
+              if (attempt > 1) {
+                  // will be skipped if it is the very first attempt
+                  // Prepare for retry attempts
+                  // Start from multiplier of 1 (attempt = 2 multiplier = 1) and then grow exponentially
+                  let backoffDelay = useExponentialBackoff ? dynamicRetryDelay * Math.pow(2, Math.ceil((attempt - 1) / exponentialBackoffExponent)) : dynamicRetryDelay;
+                  if (maxDelayAllowed !== undefined && backoffDelay > maxDelayAllowed) {
+                    backoffDelay = maxDelayAllowed;
+                  }
 
-                // update the nonce for this transaction, only if it's not provided by the user and it's not null
-                if (!isUserProvidedNonce && nonceForThisTransaction !== null) {
-                    tx.nonce = nonceForThisTransaction;
-                }
+                  // update the nonce for this transaction, only if it's not provided by the user and it's not null
+                  if (!isUserProvidedNonce && nonceForThisTransaction !== null) {
+                      tx.nonce = nonceForThisTransaction;
+                  }
 
-                tx = await this.prepareForRetry(tx, backoffDelay, dynamicFeeIncreaseFactor, config.maxGasPrice, attempt - 1, prevFee);
+                  tx = await this.prepareForRetry(tx, backoffDelay, dynamicFeeIncreaseFactor, config.maxGasPrice, attempt - 1, prevFee);
+              }
+              
+              // Send the transaction, writing the transaction to the mempool
+              currentResult = await this._sendTransaction(tx, prevFee);
+
+              if (!currentResult.txResponse) {
+                  throw new Error("Transaction was not broadcast");
+              }
+
+              // Update nonce for this transaction
+              nonceForThisTransaction = currentResult.txResponse.nonce;
+
+              // Wait for confirmation with timeout
+              await currentResult.txResponse.wait(confirmations, timeout);
+
+              // Return the result on success
+              if (attempt > 1) {
+                this.logSuccessUnstuckedTx(currentResult.txResponse);
+              }
+              return currentResult as { signedTx: string; txResponse: TransactionResponse };
+          } catch (error) {
+            lastError = error as Error;
+
+            dynamicRetryDelay = retryDelay;
+            dynamicFeeIncreaseFactor = 1;
+            prevFee.lastErrorIsTimeout = false;
+            if (this.isTimeoutError(lastError)) {
+              dynamicRetryDelay = retryDelayOnNetworkIssues;
+              // Check if transaction is stuck in mempool
+              this.logger.debug("Timeout error detected, checking if transaction might be stuck in mempool");
+              prevFee.lastErrorIsTimeout = true;
+              if (currentResult && currentResult.txResponse) {
+                  if (await this.checkMempoolStuck(currentResult.txResponse)) {
+                      this.logger.warn("Transaction stuck in mempool, retrying with higher fee...", {chainId: this.chainId, nonce: tx.nonce});
+                      dynamicFeeIncreaseFactor = feeIncreaseFactor;
+                      dynamicRetryDelay = retryDelay;
+                  } else {
+                    // The transactin was managed to be sent, even though it was timed out, 
+                    // Since we verified that the transaction was sent with the current result, we can return it
+                    this.logger.info("Transaction succeeded already, returning current result", {chainId: this.chainId, nonce: tx.nonce});
+                    this.logSuccessUnstuckedTx(currentResult.txResponse);
+                    return currentResult as { signedTx: string; txResponse: TransactionResponse };
+                  }
+              } else {
+                  this.logger.warn("Transaction was not stuck in mempool, but timed out with no response", {chainId: this.chainId, nonce: tx.nonce});
+              }
+            } else if (verifyNonceTooLow(error, tx)) {
+              // Check if error indicates nonce too low, force nonce sync by setting nonce to null
+              this.logger.warn("Nonce too low detected, forcing nonce sync...", {chainId: this.chainId, nonce: tx.nonce});
+              tx.nonce = undefined;
+              nonceForThisTransaction = null;
+            } else if (isNetworkError(error)) {
+              dynamicRetryDelay = retryDelayOnNetworkIssues;
+              // Handle network errors by waiting longer before retrying
+              this.logger.warn("Network error detected, waiting longer before retry...", {chainId: this.chainId, error, nonce: tx.nonce});
+            } else {
+              dynamicRetryDelay = retryDelayOnNetworkIssues;
+              this.logger.warn("Error detected, incrementing attempt counter", {chainId: this.chainId, error, nonce: tx.nonce});
             }
             
-            // Send the transaction, writing the transaction to the mempool
-            currentResult = await this._sendTransaction(tx, prevFee);
-
-            if (!currentResult.txResponse) {
-                throw new Error("Transaction was not broadcast");
-            }
-
-            // Update nonce for this transaction
-            nonceForThisTransaction = currentResult.txResponse.nonce;
-
-            // Wait for confirmation with timeout
-            await currentResult.txResponse.wait(confirmations, timeout);
-
-            // Return the result on success
-            if (attempt > 1) {
-              this.logSuccessUnstuckedTx(currentResult.txResponse);
-            }
-            return currentResult as { signedTx: string; txResponse: TransactionResponse };
-        } catch (error) {
-          lastError = error as Error;
-
-          dynamicRetryDelay = retryDelay;
-          dynamicFeeIncreaseFactor = 1;
-          prevFee.lastErrorIsTimeout = false;
-          if (this.isTimeoutError(lastError)) {
-            dynamicRetryDelay = retryDelayOnNetworkIssues;
-            // Check if transaction is stuck in mempool
-            this.logger.debug("Timeout error detected, checking if transaction might be stuck in mempool");
-            prevFee.lastErrorIsTimeout = true;
-            if (currentResult && currentResult.txResponse) {
-                if (await this.checkMempoolStuck(currentResult.txResponse)) {
-                    this.logger.warn("Transaction stuck in mempool, retrying with higher fee...");
-                    dynamicFeeIncreaseFactor = feeIncreaseFactor;
-                    dynamicRetryDelay = retryDelay;
-                } else {
-                  // The transactin was managed to be sent, even though it was timed out, 
-                  // Since we verified that the transaction was sent with the current result, we can return it
-                  this.logger.info("Transaction was not stuck in mempool, returning current result ");
-                  this.logSuccessUnstuckedTx(currentResult.txResponse);
-                  return currentResult as { signedTx: string; txResponse: TransactionResponse };
-                }
-            } else {
-                this.logger.warn("Transaction was not stuck in mempool, but timed out with no txResponse");
-            }
-          } else if (verifyNonceTooLow(error, tx, nonceForThisTransaction)) {
-            // Check if error indicates nonce too low, force nonce sync by setting nonce to null
-            this.logger.warn("Nonce too low detected, forcing nonce sync...");
-            tx.nonce = undefined;
-            nonceForThisTransaction = null;
-          } else if (isNetworkError(error)) {
-            dynamicRetryDelay = retryDelayOnNetworkIssues;
-            // Handle network errors by waiting longer before retrying
-            this.logger.warn("Network error detected, waiting longer before retry...", {error});
-          } else {
-            dynamicRetryDelay = retryDelayOnNetworkIssues;
-            this.logger.warn("Error detected, incrementing attempt counter", {error});
+            // If we've exhausted our attempts, throw the last error, this should be handled by the requester
+            this.verifyExhausted(maxRetryAttempts, attempt, lastError, nonceForThisTransaction, currentResult);          
+            attempt++;
           }
-          
-          // If we've exhausted our attempts, throw the last error, this should be handled by the requester
-          this.verifyExhausted(maxRetryAttempts, attempt, lastError, nonceForThisTransaction, currentResult);          
-          attempt++;
-        }
-    }
-
+      }
+  } finally {
+    this.currentTxCounter -= 1;
+  }
     throw lastError || new Error("Failed to send transaction");
   }
 
