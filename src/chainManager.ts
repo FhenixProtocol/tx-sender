@@ -291,7 +291,8 @@ export class ChainManager {
       }
       // Return only EIP-1559 fields
       const maxPriorityFeePerGas = Number(priorityFee) * multiplier;
-      const maxFeePerGas = Number(baseFee) + maxPriorityFeePerGas;
+      // https://www.blocknative.com/blog/eip-1559-fees see for more details
+      const maxFeePerGas = 2 * Number(baseFee) + maxPriorityFeePerGas;
       return {
         maxFeePerGas: BigInt(maxFeePerGas),
         maxPriorityFeePerGas: BigInt(maxPriorityFeePerGas),
