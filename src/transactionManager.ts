@@ -1,5 +1,5 @@
 import { TransactionRequest, TransactionResponse } from "ethers";
-import { ChainManagerConfig, ChainManager, TxConfig } from "./chainManager";
+import { ChainManagerConfig, ChainManager, TxConfig, TxTelemetryFunction } from "./chainManager";
 import { loadEnv } from "./utils";
 import { Logger } from "winston";
 interface TransactionManagerConfig {
@@ -89,11 +89,13 @@ export class TransactionManager {
   public async sendTransaction(
     tx: Partial<TransactionRequest>,
     config: TxConfig = {},
-    chain?: string
+    eventId: number,
+    telemetryFunction: TxTelemetryFunction,
+    chain?: string,
   ): Promise<{ signedTx: string; txResponse?: TransactionResponse }> {
     let chainManager = this.getChainManager(chain);
 
-    return chainManager.sendTransaction(tx, config);
+    return chainManager.sendTransaction(tx, config, eventId, telemetryFunction);
   }
 
   public setDefaultChain(chain: string): void {
