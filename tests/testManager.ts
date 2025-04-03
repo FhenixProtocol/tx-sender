@@ -68,7 +68,11 @@ async function sendTx(
   timeout: number = 1000
 ): Promise<void> {
   try {
-    const txResult = await txManager.sendTransaction(tx, {timeout: timeout, maxRetryAttempts: undefined}, "hardhat"); // 10 ms timeout
+    const telemetryFunctionCaller = (id: number, status: string, chainId: number, txTo: string, nonce: number) => {
+      logger.info(`Telemetry: ${id} ${status} ${chainId} ${txTo} ${nonce}`);
+    }
+    
+    const txResult = await txManager.sendTransaction(tx, {timeout: timeout, maxRetryAttempts: undefined}, 0, telemetryFunctionCaller, "hardhat"); // 10 ms timeout
     await txResult.txResponse?.wait();
     logger.info(`\x1b[32m[${diff}] Transaction sent! Hash: ${txResult.txResponse?.hash}\n\x1b[0m`);
   } catch (error) {
