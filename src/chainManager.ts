@@ -1,4 +1,4 @@
-import { Wallet, JsonRpcProvider, TransactionRequest, TransactionResponse } from "ethers";
+import { Wallet, JsonRpcProvider, TransactionRequest, TransactionResponse, sha256 } from "ethers";
 import { formatEther, parseEther, getBigInt } from "ethers";
 import { Logger } from "winston";
 const BLOCK_TIME = 13000; // 13 seconds, typical Ethereum block time is 12-13 seconds
@@ -160,9 +160,9 @@ export class ChainManager {
       telemetryFunction(eventId, `transaction_success_unstucked_${initial ? "init" : "retry"}`, this.chainId ?? 0, txResponse.to?.toString() ?? "", txResponse.nonce);
     }
     if (txResponse.maxFeePerGas) {
-      this.logger.info("chainManager unstuck transaction", {txType: initial ? "init" : "retry", nonce: txResponse.nonce, fee: txResponse.maxFeePerGas});
+      this.logger.info("chainManager unstuck transaction", {txType: initial ? "init" : "retry", nonce: txResponse.nonce, fee: txResponse.maxFeePerGas, data: txResponse.data});
     } else if (txResponse.gasPrice) {
-      this.logger.info("chainManager unstuck transaction", {txType: initial ? "init" : "retry", nonce: txResponse.nonce, fee: txResponse.gasPrice});
+      this.logger.info("chainManager unstuck transaction", {txType: initial ? "init" : "retry", nonce: txResponse.nonce, fee: txResponse.gasPrice, data: txResponse.data});
     }
   }
 
@@ -437,6 +437,11 @@ export class ChainManager {
     return (lastError instanceof Error && (lastError.message.toLowerCase().includes("timeout") || lastError.message.toLowerCase().includes("timed out")))
   }  
 
+  private shouldSkipError(error: unknown): boolean {
+    // This error occurs when the transaction is replaced by a new one with a higher gas price - should be skipped
+    return JSON.stringify(error).includes("TRANSACTION_REPLACED");
+  }
+
   private async verifyExhausted(maxRetryAttempts: number | undefined, attempt: number, lastError: Error, nonceForThisTransaction: number | null, currentResult: { signedTx: string; txResponse?: TransactionResponse } | null): Promise<void> {
     if (maxRetryAttempts !== undefined && attempt > maxRetryAttempts) {
       throw new Error(`Failed to send transaction after ${maxRetryAttempts} attempts: ${lastError.message} with nonce ${nonceForThisTransaction} and tx hash ${currentResult?.txResponse?.hash}`);
@@ -573,6 +578,12 @@ export class ChainManager {
             dynamicRetryDelay = retryDelay;
             dynamicFeeIncreaseFactor = 1;
             prevFee.lastErrorIsTimeout = false;
+            if (this.shouldSkipError(error)) {
+              const currResultInfo = currentResult?.txResponse ? `_${sha256(currentResult.txResponse.data)}` : "none";
+              telemetryFunctionCaller(eventId, `transaction_error_skipped_${attempt}_${currResultInfo}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
+              // For now we just collect telemetry, as soon as we are certain we should skip we will
+            }
+
             if (this.isTimeoutError(lastError)) {
               dynamicRetryDelay = retryDelayOnNetworkIssues;
               // Check if transaction is stuck in mempool
