@@ -581,7 +581,7 @@ export class ChainManager {
             if (this.shouldSkipError(error)) {
               const currResultInfo = currentResult?.txResponse ? `_${sha256(currentResult.txResponse.data)}` : "none";
               telemetryFunctionCaller(eventId, `transaction_error_skipped_${attempt}_${currResultInfo}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
-              // For now we just collect telemetry, as soon as we are certain we should skip we will
+              // For now we just collect telemetry, as soon as we are certain we should skip, we will
             }
 
             if (this.isTimeoutError(lastError)) {
