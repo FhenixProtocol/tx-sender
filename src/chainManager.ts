@@ -281,7 +281,7 @@ export class ChainManager {
     return tx.maxFeePerGas !== undefined || tx.gasPrice !== undefined;
   }
 
-  private async getFeeForChain(multiplier: number, minPriorityFee: number = 2_000_000_000) {
+  private async getFeeForChain(multiplier: number, minPriorityFee: number) {
     try {
       // Attempt EIP-1559 fee estimation
       const priorityFee = BigInt(Math.max(await this.provider.send("eth_maxPriorityFeePerGas", []), minPriorityFee));
