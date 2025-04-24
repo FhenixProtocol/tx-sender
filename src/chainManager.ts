@@ -344,7 +344,9 @@ export class ChainManager {
       const retryMultiplier = Math.floor(increaseFactor * 100) / 100;
       const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier);
       let newTx = { ...tx }; // Create a new object to avoid modifying the input
-      return this.setGasFees(newTx, feeData, prevFee, retryMultiplier);
+      newTx = this.setGasFees(newTx, feeData, prevFee, retryMultiplier);
+      this.logger.debug("After fees applied", {gasPrice: newTx.gasPrice, maxFeePerGas: newTx.maxFeePerGas, maxPriorityFeePerGas: newTx.maxPriorityFeePerGas});
+      return newTx;
   }
 
   /**
@@ -650,6 +652,7 @@ export class ChainManager {
                 this.logger.debug("Stack trace for code error:", {error: error.stack});
               }
 
+              this.logger.debug("Stack trace for error:", {error: new Error().stack});
               this.logger.warn("Error detected, incrementing attempt counter", {chainId: this.chainId, error, nonce: tx.nonce});
             }
             
@@ -672,6 +675,7 @@ export class ChainManager {
     // Calculate increase factor for better mempool acceptance
     let increaseFactor = Math.pow(feeIncreaseFactor, retryCount);
     // Then apply the gas increase on top of the validated transaction
+    this.logger.debug("Applying fee increase factor", {gasPrice: tx.gasPrice, maxFeePerGas: tx.maxFeePerGas, maxPriorityFeePerGas: tx.maxPriorityFeePerGas});
     tx = await this.applyFeeIncreaseFactor(tx, increaseFactor, prevFee); 
 
     // First validate the transaction with current gas prices, 
@@ -742,6 +746,7 @@ export class ChainManager {
 
         tx.maxFeePerGas = BigInt(maxFeePerGas);
         tx.maxPriorityFeePerGas = BigInt(maxPriorityFeePerGas);
+        this.logger.debug("After gas fees applied", {maxFeePerGas: tx.maxFeePerGas, maxPriorityFeePerGas: tx.maxPriorityFeePerGas});
         prevFee = {maxFeePerGas: BigInt(maxFeePerGas), maxPriorityFeePerGas: BigInt(maxPriorityFeePerGas)};
       } else if ('gasPrice' in feeData && feeData.gasPrice !== undefined && feeData.gasPrice !== null) {
         let gasPrice = Math.floor(Number(feeData.gasPrice) * retryMultiplier);
@@ -749,6 +754,7 @@ export class ChainManager {
           gasPrice = this.getBareMinFee(Number(prevFee.gasPrice), retryMultiplier, gasPrice);
         }
         tx.gasPrice = BigInt(gasPrice);
+        this.logger.debug("After gas fees applied", {gasPrice: tx.gasPrice});
         prevFee = {gasPrice: BigInt(gasPrice)};
       }
 
