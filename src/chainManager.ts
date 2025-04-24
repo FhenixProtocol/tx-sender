@@ -182,6 +182,8 @@ export class ChainManager {
       this.nonceSyncing = this.provider.getTransactionCount(this.wallet.address, "pending");
       this.latestNonce = await this.provider.getTransactionCount(this.wallet.address, "latest");
       this.nonce = await this.nonceSyncing;
+
+      this.logger.info("chainManager nonce synced", {chainId: this.chainId, nonce: this.nonce, latestNonce: this.latestNonce});
     }
   }
 
@@ -355,6 +357,7 @@ export class ChainManager {
       // Since the gas is being estimated, with binary search, we can use a relative low gas limit
       // to avoid wasting gas on the estimation itself
       // In the worst case, the gas limit will be increased to the estimated value - dynamically
+      this.logger.debug("Estimating gas for transaction", {tx: txWithLimit});
       gasEstimate = await this.provider.estimateGas({...txWithLimit, from: this.wallet.address});
       tx.gasLimit = gasEstimate * 110n / 100n;
       const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier);
