@@ -652,8 +652,16 @@ export class ChainManager {
                 this.logger.debug("Stack trace for code error:", {error: error.stack});
               }
 
-              this.logger.debug("Stack trace for error:", {error: new Error().stack});
-              this.logger.warn("Error detected, incrementing attempt counter", {chainId: this.chainId, error, nonce: tx.nonce});
+              this.logger.warn("Error detected, incrementing attempt counter", {
+                chainId: this.chainId, 
+                error: {
+                  message: error instanceof Error ? error.message : String(error),
+                  stack: error instanceof Error ? error.stack : undefined,
+                  name: error instanceof Error ? error.name : undefined,
+                  code: error instanceof Error ? (error as any).code : undefined
+                },
+                nonce: tx.nonce
+              });
             }
             
             // If we've exhausted our attempts, throw the last error, this should be handled by the requester
