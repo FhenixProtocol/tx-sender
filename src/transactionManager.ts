@@ -45,6 +45,12 @@ export class TransactionManager {
     }
   }
 
+  public async init(): Promise<void> {
+    for (const chainManager of this.chainManagers.values()) {
+      await chainManager.init();
+    }
+  }
+
   static fromDotEnv(config: TransactionManagerConfigPublic) {
     loadEnv(config.logger);
 
