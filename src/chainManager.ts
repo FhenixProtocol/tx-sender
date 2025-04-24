@@ -352,6 +352,11 @@ export class ChainManager {
    */
   private async validateFunds(tx: Partial<TransactionRequest>, prevFee: FeeData): Promise<Partial<TransactionRequest>> {
     let gasEstimate;
+    if (!this.doesTxContainFee(tx)) {
+      const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier);
+      tx = this.setGasFees(tx, feeData, prevFee);
+    }
+
     if (tx.gasLimit === undefined) {
       const txWithLimit = { ...tx, gasLimit: 5_000_000 };
       // Since the gas is being estimated, with binary search, we can use a relative low gas limit
@@ -360,11 +365,11 @@ export class ChainManager {
       this.logger.debug("Estimating gas for transaction", {tx: txWithLimit});
       gasEstimate = await this.provider.estimateGas({...txWithLimit, from: this.wallet.address});
       tx.gasLimit = gasEstimate * 110n / 100n;
-      const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier);
-      tx = this.setGasFees(tx, feeData, prevFee);
+
     } else {
       this.logger.debug("Using given gaslimit for estimation", {gasLimit: tx.gasLimit});
       if (!this.doesTxContainFee(tx)) {
+        this.logger.debug("Stack trace for missing fee:", {error: new Error().stack});
         this.logger.error("Transaction does not contain fee, this could cause issues with the nonce sync, failed to release stuck transactions");
         throw new Error("Transaction does not contain fee, this could cause issues with the nonce sync, failed to release stuck transactions");
       }
@@ -427,6 +432,7 @@ export class ChainManager {
     tx = this.addChainId(tx);
 
     // Validate balance and estimate gas
+    this.logger.debug("Validating transaction with current gas fees (_sendTransaction)", {gasPrice: tx.gasPrice, maxFeePerGas: tx.maxFeePerGas, maxPriorityFeePerGas: tx.maxPriorityFeePerGas});
     tx = await this.validateFunds(tx, prevFee);
 
     // Sign the transaction
@@ -671,6 +677,7 @@ export class ChainManager {
 
     // First validate the transaction with current gas prices, 
     // the prevFee here should not be used, since we already have gasLimit in retries
+    this.logger.debug("Validating transaction with current gas fees", {gasPrice: tx.gasPrice, maxFeePerGas: tx.maxFeePerGas, maxPriorityFeePerGas: tx.maxPriorityFeePerGas});
     tx = await this.validateFunds(tx, prevFee);
     
 
