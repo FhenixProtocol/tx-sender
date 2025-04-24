@@ -278,6 +278,10 @@ export class ChainManager {
     );
   }
 
+  private doesTxContainFee(tx: Partial<TransactionRequest>): boolean {
+    return tx.maxFeePerGas !== undefined || tx.gasPrice !== undefined;
+  }
+
   private async getFeeForChain(multiplier: number) {
     try {
       // Attempt EIP-1559 fee estimation
@@ -357,6 +361,11 @@ export class ChainManager {
       tx = this.setGasFees(tx, feeData, prevFee);
     } else {
       this.logger.debug("Using given gaslimit for estimation", {gasLimit: tx.gasLimit});
+      if (!this.doesTxContainFee(tx)) {
+        this.logger.error("Transaction does not contain fee, this could cause issues with the nonce sync, failed to release stuck transactions");
+        throw new Error("Transaction does not contain fee, this could cause issues with the nonce sync, failed to release stuck transactions");
+      }
+
       gasEstimate = await this.provider.estimateGas({...tx, from: this.wallet.address});
     }
 
@@ -628,6 +637,11 @@ export class ChainManager {
             } else {
               telemetryFunctionCaller(eventId, `transaction_error_unknown_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
               dynamicRetryDelay = retryDelayOnNetworkIssues;
+              // Log stack trace for null/undefined errors to help with debugging
+              if (error instanceof TypeError) {
+                this.logger.debug("Stack trace for code error:", {error: error.stack});
+              }
+
               this.logger.warn("Error detected, incrementing attempt counter", {chainId: this.chainId, error, nonce: tx.nonce});
             }
             
@@ -646,16 +660,16 @@ export class ChainManager {
     if (backoffDelay > 0) {
         await new Promise(resolve => setTimeout(resolve, backoffDelay));
     }
+    
+    // Calculate increase factor for better mempool acceptance
+    let increaseFactor = Math.pow(feeIncreaseFactor, retryCount);
+    // Then apply the gas increase on top of the validated transaction
+    tx = await this.applyFeeIncreaseFactor(tx, increaseFactor, prevFee); 
 
     // First validate the transaction with current gas prices, 
     // the prevFee here should not be used, since we already have gasLimit in retries
     tx = await this.validateFunds(tx, prevFee);
     
-    // Calculate increase factor for better mempool acceptance
-    let increaseFactor = Math.pow(feeIncreaseFactor, retryCount);
-
-    // Then apply the gas increase on top of the validated transaction
-    tx = await this.applyFeeIncreaseFactor(tx, increaseFactor, prevFee); 
 
     // Check against max gas price if specified
     if (maxGasPrice) {
