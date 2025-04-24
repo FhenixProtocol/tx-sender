@@ -283,7 +283,6 @@ export class ChainManager {
       // Attempt EIP-1559 fee estimation
       const priorityFee = BigInt(await this.provider.send("eth_maxPriorityFeePerGas", []));
       const latestBlock = await this.provider.getBlock("latest");
-      const pendingBlock = await this.provider.getBlock("pending");
       if (latestBlock === null) {
         throw new Error("Failed to fetch latest block");
       }
