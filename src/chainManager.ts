@@ -306,8 +306,8 @@ export class ChainManager {
       const maxFeePerGas = 2 * Number(baseFee) + maxPriorityFeePerGas;
       this.logger.debug("Got fee for chain",{chainId: this.chainId, blockNumber: latestBlock.number, baseFee: baseFee, priorityFee: priorityFee, maxFeePerGas: maxFeePerGas, maxPriorityFeePerGas: maxPriorityFeePerGas})
       return {
-        maxFeePerGas: BigInt(maxFeePerGas),
-        maxPriorityFeePerGas: BigInt(maxPriorityFeePerGas),
+        maxFeePerGas: BigInt(Math.ceil(maxFeePerGas)),
+        maxPriorityFeePerGas: BigInt(Math.ceil(maxPriorityFeePerGas)),
       }
     } catch (error) {
       if (this.isMethodNotFound(error) || this.checkForMessageInError(error, "Failed to fetch base fee")) {
@@ -318,7 +318,7 @@ export class ChainManager {
           throw new Error("Failed to get gas price");
         }
         return {
-          gasPrice: BigInt(Number(feeData.gasPrice) * multiplier),
+          gasPrice: BigInt(Math.ceil(Number(feeData.gasPrice) * multiplier)),
         };
       }
         throw error;
@@ -752,18 +752,18 @@ export class ChainManager {
           maxPriorityFeePerGas = this.getBareMinFee(Number(prevFee.maxPriorityFeePerGas), retryMultiplier, maxPriorityFeePerGas);
         }
 
-        tx.maxFeePerGas = BigInt(maxFeePerGas);
-        tx.maxPriorityFeePerGas = BigInt(maxPriorityFeePerGas);
+        tx.maxFeePerGas = BigInt(Math.ceil(maxFeePerGas));
+        tx.maxPriorityFeePerGas = BigInt(Math.ceil(maxPriorityFeePerGas));
         this.logger.debug("After gas fees applied", {maxFeePerGas: tx.maxFeePerGas, maxPriorityFeePerGas: tx.maxPriorityFeePerGas});
-        prevFee = {maxFeePerGas: BigInt(maxFeePerGas), maxPriorityFeePerGas: BigInt(maxPriorityFeePerGas)};
+        prevFee = {maxFeePerGas: BigInt(Math.ceil(maxFeePerGas)), maxPriorityFeePerGas: BigInt(Math.ceil(maxPriorityFeePerGas))};
       } else if ('gasPrice' in feeData && feeData.gasPrice !== undefined && feeData.gasPrice !== null) {
         let gasPrice = Math.floor(Number(feeData.gasPrice) * retryMultiplier);
         if (prevFee.gasPrice !== undefined && prevFee.lastErrorIsTimeout) {
           gasPrice = this.getBareMinFee(Number(prevFee.gasPrice), retryMultiplier, gasPrice);
         }
-        tx.gasPrice = BigInt(gasPrice);
+        tx.gasPrice = BigInt(Math.ceil(gasPrice));
         this.logger.debug("After gas fees applied", {gasPrice: tx.gasPrice});
-        prevFee = {gasPrice: BigInt(gasPrice)};
+        prevFee = {gasPrice: BigInt(Math.ceil(gasPrice))};
       }
 
       return tx;
