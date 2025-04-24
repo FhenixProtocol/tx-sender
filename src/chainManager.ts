@@ -652,6 +652,7 @@ export class ChainManager {
                 this.logger.debug("Stack trace for code error:", {error: error.stack});
               }
 
+              this.logger.debug("Stack trace for error:", {error: new Error().stack});
               this.logger.warn("Error detected, incrementing attempt counter", {chainId: this.chainId, error, nonce: tx.nonce});
             }
             
