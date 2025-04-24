@@ -157,7 +157,7 @@ export class ChainManager {
 
   private logSuccessUnstuckedTx(txResponse: TransactionResponse, initial: boolean = false, eventId: number = 0, telemetryFunction: TxTelemetryFunction | null = null): void {
     if (telemetryFunction) {
-      telemetryFunction(eventId, `transaction_success_unstucked_${initial ? "init" : "retry"}`, this.chainId ?? 0, txResponse.to?.toString() ?? "", txResponse.nonce);
+      telemetryFunction(eventId, `transaction_success_unstucked_${initial ? "init" : "retry"}_${txResponse.hash}`, this.chainId ?? 0, txResponse.to?.toString() ?? "", txResponse.nonce);
     }
     if (txResponse.maxFeePerGas) {
       this.logger.info("chainManager unstuck transaction", {txType: initial ? "init" : "retry", nonce: txResponse.nonce, fee: txResponse.maxFeePerGas, data: txResponse.data});
@@ -182,6 +182,8 @@ export class ChainManager {
       this.nonceSyncing = this.provider.getTransactionCount(this.wallet.address, "pending");
       this.latestNonce = await this.provider.getTransactionCount(this.wallet.address, "latest");
       this.nonce = await this.nonceSyncing;
+
+      this.logger.info("chainManager nonce synced", {chainId: this.chainId, nonce: this.nonce, latestNonce: this.latestNonce});
     }
   }
 
@@ -355,6 +357,7 @@ export class ChainManager {
       // Since the gas is being estimated, with binary search, we can use a relative low gas limit
       // to avoid wasting gas on the estimation itself
       // In the worst case, the gas limit will be increased to the estimated value - dynamically
+      this.logger.debug("Estimating gas for transaction", {tx: txWithLimit});
       gasEstimate = await this.provider.estimateGas({...txWithLimit, from: this.wallet.address});
       tx.gasLimit = gasEstimate * 110n / 100n;
       const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier);
@@ -586,7 +589,7 @@ export class ChainManager {
               if (attempt > 1) {
                 this.logSuccessUnstuckedTx(currentResult.txResponse, false, eventId, telemetryFunction);
               } else {
-                telemetryFunctionCaller(eventId, `transaction_succeeded_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
+                telemetryFunctionCaller(eventId, `transaction_succeeded_${attempt}_${currentResult.txResponse.hash}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
               }
               return currentResult as { signedTx: string; txResponse: TransactionResponse };
           } catch (error) {
