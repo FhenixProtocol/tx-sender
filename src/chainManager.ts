@@ -86,40 +86,34 @@ export class ChainManager {
     this.logger = logger;
     this.maxTxsAtOnce = maxTxsAtOnce;
     this.activeTxsCounter = 0;
-
-    this.logger.info("ChainManager initialized", {chainId: this.chainId, maxTxsAtOnce: this.maxTxsAtOnce});
-    
-    // Fetch initial wallet balance
-    this.syncBalance().catch(err => {
-      this.logger.error("Failed to fetch initial balance:", err);
-    });
-
-    // Fetch initial nonce
-    this.syncNonce().catch(err => {
-      this.logger.error("Failed to fetch initial nonce:", err);
-    });
-
-    // make sure there are no pending transactions
-    this.handleStuckTransactions().catch(err => {
-      this.logger.error("Failed to handle stuck transactions:", err);
-    });
-
-    // wait for the chain to be ready
-    this.waitForReady().catch(err => {
-      this.logger.error("Failed to wait for chain to be ready:", err);
-    });
-  }
-
-  private async waitForReady(): Promise<void> {
-    while (!this.ready) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
   }
 
   public isReady(): boolean {
     return this.ready;
   }
 
+  public async init(): Promise<void> {
+    this.logger.info("ChainManager initialized", {chainId: this.chainId, maxTxsAtOnce: this.maxTxsAtOnce});
+    
+    // Fetch initial wallet balance
+    await this.syncBalance().catch(err => {
+      this.logger.error("Failed to fetch initial balance:", err);
+    });
+
+    // Fetch initial nonce
+    await this.syncNonce().catch(err => {
+      this.logger.error("Failed to fetch initial nonce:", err);
+    });
+
+    // make sure there are no pending transactions
+    await this.handleStuckTransactions().catch(err => {
+      this.logger.error("Failed to handle stuck transactions:", err);
+    });
+    
+    this.ready = true;
+    this.logger.info("chainManager is ready", {chainId: this.chainId});
+  }
+  
   private async handleStuckTransactions(): Promise<void> {
     if (this.latestNonce !== null && this.nonce !== null && this.latestNonce < this.nonce) {
       this.logger.warn("There are pending transactions, this could cause issues with the nonce sync, we'll treat them as stuck");
@@ -151,7 +145,6 @@ export class ChainManager {
       throw new Error("Nonce is not synced, this could cause issues with the nonce sync, failed to release stuck transactions");
     }
 
-    this.logger.info("chainManager is ready", {chainId: this.chainId});
     this.ready = true;
   }
 
