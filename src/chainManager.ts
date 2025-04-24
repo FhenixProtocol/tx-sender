@@ -115,6 +115,7 @@ export class ChainManager {
   }
   
   private async handleStuckTransactions(): Promise<void> {
+    this.logger.info("Handling stuck transactions", {chainId: this.chainId, latestNonce: this.latestNonce, nonce: this.nonce});
     if (this.latestNonce !== null && this.nonce !== null && this.latestNonce < this.nonce) {
       this.logger.warn("There are pending transactions, this could cause issues with the nonce sync, we'll treat them as stuck");
       
