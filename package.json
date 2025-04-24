@@ -1,6 +1,6 @@
 {
   "name": "tx-sender",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "",
   "type": "module",
   "main": "dist/index.js",
@@ -29,7 +29,7 @@
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "@rollup/plugin-commonjs": "^28.0.1",
     "@rollup/plugin-node-resolve": "^15.3.0",
-    "@rollup/plugin-typescript": "^12.1.1",
+  "@rollup/plugin-typescript": "^12.1.1",
     "@types/node": "^22.10.0",
     "axios": "^1.8.3",
     "hardhat": "^2.22.19",
