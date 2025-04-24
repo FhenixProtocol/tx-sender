@@ -36,6 +36,7 @@ export interface ChainManagerConfig {
   feeMultiplier?: number;            // Fee multiplier for gas estimation
   blockTag?: string;                 // Block tag to use for transaction count
   maxTxsAtOnce?: number;             // Maximum number of transactions to send at once
+  minPriorityFee?: number;           // Minimum priority fee to use for gas estimation in WEI (default: 2_000_000_000)
 }
 
 export interface TxConfig {
@@ -68,12 +69,13 @@ export class ChainManager {
   private chainId: number | undefined = undefined;
   private balance: bigint = BigInt(0);
   private chainSpecificFeeMultiplier: number = 1.1;
+  private minPriorityFee: number = 2_000_000_000;
   private ready: boolean = false;
   private logger: Logger;
   private maxTxsAtOnce: number = 50;
   private activeTxsCounter: number = 0;
   constructor(config: ChainManagerConfig, logger: Logger) {
-    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = 1.1, maxTxsAtOnce = 50} = config;
+    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = 1.1, maxTxsAtOnce = 50, minPriorityFee = 2_000_000_000} = config;
 
     if (!privateKey || !rpcUrl) {
       throw new Error("Private key and RPC URL are required.");
@@ -83,6 +85,7 @@ export class ChainManager {
     this.broadcast = broadcast;
     this.chainId = chainId;
     this.chainSpecificFeeMultiplier = feeMultiplier;
+    this.minPriorityFee = minPriorityFee;
     this.logger = logger;
     this.maxTxsAtOnce = maxTxsAtOnce;
     this.activeTxsCounter = 0;
@@ -172,7 +175,7 @@ export class ChainManager {
    * Initializes the Nonce according to the chain state.
    */
   private async syncNonce(): Promise<void> {
-    if (this.nonce === null) {
+    if (this.nonce === null || this.nonce === undefined) {
       this.nonceSyncing = this.provider.getTransactionCount(this.wallet.address, "pending");
       this.latestNonce = await this.provider.getTransactionCount(this.wallet.address, "latest");
       this.nonce = await this.nonceSyncing;
@@ -219,7 +222,7 @@ export class ChainManager {
   public async signTransaction(tx: Partial<TransactionRequest>): Promise<string> {
     tx = this.addChainId(tx);
 
-    this.logger.debug("Signing transaction with fees", {maxFeePerGas: tx.maxFeePerGas, maxPriorityFeePerGas: tx.maxPriorityFeePerGas, gasPrice: tx.gasPrice});
+    this.logger.debug("Signing transaction with fees", {maxFeePerGas: tx.maxFeePerGas, maxPriorityFeePerGas: tx.maxPriorityFeePerGas, gasPrice: tx.gasPrice, gasLimit: tx.gasLimit});
 
     // Only set nonce if not provided by user
     if (tx.nonce === undefined) {
@@ -278,10 +281,10 @@ export class ChainManager {
     return tx.maxFeePerGas !== undefined || tx.gasPrice !== undefined;
   }
 
-  private async getFeeForChain(multiplier: number) {
+  private async getFeeForChain(multiplier: number, minPriorityFee: number) {
     try {
       // Attempt EIP-1559 fee estimation
-      const priorityFee = BigInt(await this.provider.send("eth_maxPriorityFeePerGas", []));
+      const priorityFee = BigInt(Math.max(await this.provider.send("eth_maxPriorityFeePerGas", []), minPriorityFee));
       const latestBlock = await this.provider.getBlock("latest");
       if (latestBlock === null) {
         this.logger.error("Failed to fetch latest block");
@@ -336,7 +339,7 @@ export class ChainManager {
       if (increaseFactor <= 1) return tx;
 
       const retryMultiplier = Math.floor(increaseFactor * 100) / 100;
-      const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier);
+      const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier, this.minPriorityFee);
       let newTx = { ...tx }; // Create a new object to avoid modifying the input
       newTx = this.setGasFees(newTx, feeData, prevFee, retryMultiplier);
       this.logger.debug("After fees applied", {gasPrice: newTx.gasPrice, maxFeePerGas: newTx.maxFeePerGas, maxPriorityFeePerGas: newTx.maxPriorityFeePerGas});
@@ -349,7 +352,7 @@ export class ChainManager {
   private async validateFunds(tx: Partial<TransactionRequest>, prevFee: FeeData): Promise<Partial<TransactionRequest>> {
     let gasEstimate;
     if (!this.doesTxContainFee(tx)) {
-      const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier);
+      const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier, this.minPriorityFee);
       tx = this.setGasFees(tx, feeData, prevFee);
     }
 
@@ -545,7 +548,7 @@ export class ChainManager {
     }
 
     const telemetryFunctionCaller = (id: number, status: string, chainId: number, txTo: string, nonce: number) => {
-      if (telemetryFunction) {
+      if (telemetryFunction && id !== 0) {
         telemetryFunction(id, status, chainId, txTo, nonce);
       }
     }
@@ -771,5 +774,4 @@ export class ChainManager {
     }
     return undefined;
   }
-
 }
