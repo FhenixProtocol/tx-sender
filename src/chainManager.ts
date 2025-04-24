@@ -284,11 +284,13 @@ export class ChainManager {
       const priorityFee = BigInt(await this.provider.send("eth_maxPriorityFeePerGas", []));
       const latestBlock = await this.provider.getBlock("latest");
       if (latestBlock === null) {
+        this.logger.error("Failed to fetch latest block");
         throw new Error("Failed to fetch latest block");
       }
 
       const baseFee = latestBlock.baseFeePerGas;
       if (baseFee === null) {
+        this.logger.error("Failed to fetch base fee");
         throw new Error("Failed to fetch base fee");
       }
 
@@ -296,7 +298,7 @@ export class ChainManager {
       const maxPriorityFeePerGas = Number(priorityFee) * multiplier;
       // https://www.blocknative.com/blog/eip-1559-fees see for more details
       const maxFeePerGas = 2 * Number(baseFee) + maxPriorityFeePerGas;
-      this.logger.debug("Got fee for chain",{chainId: this.chainId, blockNumber: latestBlock.number, baseFee: baseFee, priorityFee: priorityFee, pendingBlockNumber: pendingBlock?.number, pendingBlockBaseFee: pendingBlock?.baseFeePerGas, maxFeePerGas: maxFeePerGas, maxPriorityFeePerGas: maxPriorityFeePerGas})
+      this.logger.debug("Got fee for chain",{chainId: this.chainId, blockNumber: latestBlock.number, baseFee: baseFee, priorityFee: priorityFee, maxFeePerGas: maxFeePerGas, maxPriorityFeePerGas: maxPriorityFeePerGas})
       return {
         maxFeePerGas: BigInt(maxFeePerGas),
         maxPriorityFeePerGas: BigInt(maxPriorityFeePerGas),
@@ -305,7 +307,10 @@ export class ChainManager {
       if (this.isMethodNotFound(error) || this.checkForMessageInError(error, "Failed to fetch base fee")) {
         // Return only legacy field (gasPrice - eth_gasPrice)
         const feeData = await this.provider.getFeeData();
-        if (!feeData.gasPrice) throw new Error("Failed to get gas price");
+        if (!feeData.gasPrice) {
+          this.logger.error("Failed to get gas price");
+          throw new Error("Failed to get gas price");
+        }
         return {
           gasPrice: BigInt(Number(feeData.gasPrice) * multiplier),
         };
