@@ -365,7 +365,6 @@ export class ChainManager {
       this.logger.debug("Estimating gas for transaction", {tx: txWithLimit});
       gasEstimate = await this.provider.estimateGas({...txWithLimit, from: this.wallet.address});
       tx.gasLimit = gasEstimate * 110n / 100n;
-
     } else {
       this.logger.debug("Using given gaslimit for estimation", {gasLimit: tx.gasLimit});
       if (!this.doesTxContainFee(tx)) {
