@@ -223,6 +223,8 @@ export class ChainManager {
   public async signTransaction(tx: Partial<TransactionRequest>): Promise<string> {
     tx = this.addChainId(tx);
 
+    this.logger.debug("Signing transaction with fees", {maxFeePerGas: tx.maxFeePerGas, maxPriorityFeePerGas: tx.maxPriorityFeePerGas, gasPrice: tx.gasPrice});
+
     // Only set nonce if not provided by user
     if (tx.nonce === undefined) {
         await this.getNonce();
@@ -295,7 +297,7 @@ export class ChainManager {
       const maxPriorityFeePerGas = Number(priorityFee) * multiplier;
       // https://www.blocknative.com/blog/eip-1559-fees see for more details
       const maxFeePerGas = 2 * Number(baseFee) + maxPriorityFeePerGas;
-      this.logger.info("LIORRRR Setting fee", {blockNumber: latestBlock.number, baseFee: baseFee, priorityFee: priorityFee, pendingBlockNumber: pendingBlock?.number, pendingBlockBaseFee: pendingBlock?.baseFeePerGas, maxFeePerGas: maxFeePerGas, maxPriorityFeePerGas: maxPriorityFeePerGas})
+      this.logger.debug("Got fee for chain",{chainId: this.chainId, blockNumber: latestBlock.number, baseFee: baseFee, priorityFee: priorityFee, pendingBlockNumber: pendingBlock?.number, pendingBlockBaseFee: pendingBlock?.baseFeePerGas, maxFeePerGas: maxFeePerGas, maxPriorityFeePerGas: maxPriorityFeePerGas})
       return {
         maxFeePerGas: BigInt(maxFeePerGas),
         maxPriorityFeePerGas: BigInt(maxPriorityFeePerGas),
@@ -331,11 +333,8 @@ export class ChainManager {
 
       const retryMultiplier = Math.floor(increaseFactor * 100) / 100;
       const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier);
-      const newTx = { ...tx }; // Create a new object to avoid modifying the input
-      this.setGasFees(newTx, feeData, prevFee, retryMultiplier);
-      
-      this.logger.info("LIORRRR applyFeeIncreaseFactor tx with fees", {nonce: newTx.nonce, maxFeePerGas: newTx.maxFeePerGas, maxPriorityFeePerGas: newTx.maxPriorityFeePerGas, gasPrice: newTx.gasPrice, feeData, prevFee})
-      return newTx;
+      let newTx = { ...tx }; // Create a new object to avoid modifying the input
+      return this.setGasFees(newTx, feeData, prevFee, retryMultiplier);
   }
 
   /**
@@ -351,8 +350,7 @@ export class ChainManager {
       gasEstimate = await this.provider.estimateGas({...txWithLimit, from: this.wallet.address});
       tx.gasLimit = gasEstimate * 110n / 100n;
       const feeData = await this.getFeeForChain(this.chainSpecificFeeMultiplier);
-      this.setGasFees(tx, feeData, prevFee);
-      this.logger.info("LIORRRR validateFunds tx with fees", {nonce: tx.nonce, maxFeePerGas: tx.maxFeePerGas, maxPriorityFeePerGas: tx.maxPriorityFeePerGas, gasPrice: tx.gasPrice, feeData, prevFee})
+      tx = this.setGasFees(tx, feeData, prevFee);
     } else {
       this.logger.debug("Using given gaslimit for estimation", {gasLimit: tx.gasLimit});
       gasEstimate = await this.provider.estimateGas({...tx, from: this.wallet.address});
@@ -692,7 +690,7 @@ export class ChainManager {
       feeData: FeeData,
       prevFee: FeeData,
       retryMultiplier: number = 1,
-  ): void {
+  ): Partial<TransactionRequest> {
       // Clear existing gas fields
       delete tx.gasPrice;
       delete tx.maxFeePerGas;
@@ -727,7 +725,7 @@ export class ChainManager {
         prevFee = {gasPrice: BigInt(gasPrice)};
       }
 
-      this.logger.info("LIORRRR SetGasFees tx with fees", {nonce: tx.nonce, maxFeePerGas: tx.maxFeePerGas, maxPriorityFeePerGas: tx.maxPriorityFeePerGas, gasPrice: tx.gasPrice, feeData, prevFee})
+      return tx;
   }
 
   private getEffectiveGasPrice(tx: Partial<TransactionRequest>): bigint | undefined {
