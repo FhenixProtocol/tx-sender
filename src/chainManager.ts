@@ -37,6 +37,7 @@ export interface ChainManagerConfig {
   blockTag?: string;                 // Block tag to use for transaction count
   maxTxsAtOnce?: number;             // Maximum number of transactions to send at once
   minPriorityFee?: number;           // Minimum priority fee to use for gas estimation in WEI (default: 2_000_000_000)
+  txGasLimit? : number;              // Gas limit to use for transactions (default: 5_000_000)
 }
 
 export interface TxConfig {
@@ -73,9 +74,10 @@ export class ChainManager {
   private ready: boolean = false;
   private logger: Logger;
   private maxTxsAtOnce: number = 50;
+  private txGasLimit: number = 5_000_000;
   private activeTxsCounter: number = 0;
   constructor(config: ChainManagerConfig, logger: Logger) {
-    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = 1.1, maxTxsAtOnce = 50, minPriorityFee = 2_000_000_000} = config;
+    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = 1.1, maxTxsAtOnce = 50, minPriorityFee = 2_000_000_000, txGasLimit = 5_000_000} = config;
 
     if (!privateKey || !rpcUrl) {
       throw new Error("Private key and RPC URL are required.");
@@ -88,6 +90,7 @@ export class ChainManager {
     this.minPriorityFee = minPriorityFee;
     this.logger = logger;
     this.maxTxsAtOnce = maxTxsAtOnce;
+    this.txGasLimit = txGasLimit;
     this.activeTxsCounter = 0;
   }
 
@@ -357,7 +360,7 @@ export class ChainManager {
     }
 
     if (tx.gasLimit === undefined) {
-      const txWithLimit = { ...tx, gasLimit: 5_000_000 };
+      const txWithLimit = { ...tx, gasLimit:  this.txGasLimit};
       // Since the gas is being estimated, with binary search, we can use a relative low gas limit
       // to avoid wasting gas on the estimation itself
       // In the worst case, the gas limit will be increased to the estimated value - dynamically
