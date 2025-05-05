@@ -180,8 +180,8 @@ export class ChainManager {
   private async syncNonce(): Promise<void> {
     if (this.nonce === null || this.nonce === undefined) {
       this.nonceSyncing = this.provider.getTransactionCount(this.wallet.address, "pending");
-      this.latestNonce = await this.provider.getTransactionCount(this.wallet.address, "latest");
       this.nonce = await this.nonceSyncing;
+      this.latestNonce = await this.provider.getTransactionCount(this.wallet.address, "latest");
 
       this.logger.info("chainManager nonce synced", {chainId: this.chainId, nonce: this.nonce, latestNonce: this.latestNonce});
     }
