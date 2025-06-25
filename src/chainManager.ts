@@ -1,6 +1,6 @@
 import { Wallet, JsonRpcProvider, TransactionRequest, TransactionResponse, sha256 } from "ethers";
-import { formatEther, parseEther, getBigInt } from "ethers";
-import { error, Logger } from "winston";
+import { parseEther, getBigInt } from "ethers";
+import { Logger } from "winston";
 const BLOCK_TIME = 13000; // 13 seconds, typical Ethereum block time is 12-13 seconds
 
 /**
