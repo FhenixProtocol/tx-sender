@@ -1,6 +1,6 @@
 import { Wallet, JsonRpcProvider, TransactionRequest, TransactionResponse, sha256 } from "ethers";
 import { formatEther, parseEther, getBigInt } from "ethers";
-import { Logger } from "winston";
+import { error, Logger } from "winston";
 const BLOCK_TIME = 13000; // 13 seconds, typical Ethereum block time is 12-13 seconds
 
 /**
@@ -58,6 +58,12 @@ export interface FeeData {
   maxPriorityFeePerGas?: bigint;
   gasPrice?: bigint;
   lastErrorIsTimeout?: boolean;
+}
+
+enum TransactionStatus {
+  STUCK_IN_MEMPOOL = "STUCK_IN_MEMPOOL",
+  NO_TX = "NO_TX",
+  SUCCEEDED = "SUCCEEDED"
 }
 
 export class ChainManager {
@@ -450,13 +456,22 @@ export class ChainManager {
     return { signedTx };
   }
 
-  private async checkMempoolStuck(txResponse: TransactionResponse): Promise<boolean> {
+  private async checkTransactionStatus(txResponse: TransactionResponse): Promise<TransactionStatus> {
       try {
           const tx = await this.provider.getTransaction(txResponse.hash);
-          // If transaction is still pending after timeout, consider it stuck
-          return tx !== null && tx.blockNumber === null;
+          if (tx === null) {
+            return TransactionStatus.NO_TX;
+          }
+
+          // If no block number, the tx is still in mempool
+          else if (tx.blockNumber === null) {
+            return TransactionStatus.STUCK_IN_MEMPOOL;
+          }
+
+          // When tx and blockNumber exist, we can safely assume that the tx was included in a block
+          return TransactionStatus.SUCCEEDED;
       } catch (error) {
-          return false;
+          return TransactionStatus.NO_TX;
       }
   };
 
@@ -473,6 +488,11 @@ export class ChainManager {
     if (maxRetryAttempts !== undefined && attempt > maxRetryAttempts) {
       throw new Error(`Failed to send transaction after ${maxRetryAttempts} attempts: ${lastError.message} with nonce ${nonceForThisTransaction} and tx hash ${currentResult?.txResponse?.hash}`);
     }
+  }
+
+  private reportTimeoutError(telemetryFunctionCaller: TxTelemetryFunction, eventId: number, attempt: number, tx: Partial<TransactionRequest>): void {
+    telemetryFunctionCaller(eventId, `transaction_error_timed_out_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
+    this.logger.warn("Transaction was not stuck in mempool, but timed out with no response", {chainId: this.chainId, nonce: tx.nonce});
   }
 
   /**
@@ -617,21 +637,24 @@ export class ChainManager {
               this.logger.debug("Timeout error detected, checking if transaction might be stuck in mempool");
               prevFee.lastErrorIsTimeout = true;
               if (currentResult && currentResult.txResponse) {
-                if (await this.checkMempoolStuck(currentResult.txResponse)) {
+                const txStatus = await this.checkTransactionStatus(currentResult.txResponse);
+                if (txStatus === TransactionStatus.STUCK_IN_MEMPOOL) {
                   telemetryFunctionCaller(eventId, `transaction_error_stuck_in_mempool_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
                   this.logger.warn("Transaction stuck in mempool, retrying with higher fee...", {chainId: this.chainId, nonce: tx.nonce});
                   dynamicFeeIncreaseFactor = feeIncreaseFactor;
                   dynamicRetryDelay = retryDelay;
-                } else {
+                } else if (txStatus === TransactionStatus.SUCCEEDED) {
                   // The transactin was managed to be sent, even though it was timed out, 
                   // Since we verified that the transaction was sent with the current result, we can return it
-                  this.logger.info("Transaction succeeded already, returning current result", {chainId: this.chainId, nonce: tx.nonce});
+                  this.logger.info("Transaction succeeded already, returning current result", {chainId: this.chainId, nonce: tx.nonce, block: currentResult.txResponse.blockNumber});
+                  this.logger.debug("Succeeded transaction is", {tx: tx})
                   this.logSuccessUnstuckedTx(currentResult.txResponse, false,eventId, telemetryFunction);
                   return currentResult as { signedTx: string; txResponse: TransactionResponse };
+                } else {
+                  this.reportTimeoutError(telemetryFunctionCaller, eventId, attempt, tx);
                 }
               } else {
-                telemetryFunctionCaller(eventId, `transaction_error_timed_out_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
-                this.logger.warn("Transaction was not stuck in mempool, but timed out with no response", {chainId: this.chainId, nonce: tx.nonce});
+                this.reportTimeoutError(telemetryFunctionCaller, eventId, attempt, tx);
               }
             } else if (verifyNonceTooLow(error, tx)) {
               telemetryFunctionCaller(eventId, `transaction_error_nonce_too_low_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
