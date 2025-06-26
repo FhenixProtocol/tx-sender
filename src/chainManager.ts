@@ -163,7 +163,7 @@ export class ChainManager {
 
   private logSuccessUnstuckedTx(txResponse: TransactionResponse, initial: boolean = false, eventId: number = 0, telemetryFunction: TxTelemetryFunction | null = null): void {
     if (telemetryFunction) {
-      telemetryFunction(eventId, `transaction_success_unstucked_${initial ? "init" : "retry"}_${txResponse.hash}`, this.chainId ?? 0, txResponse.to?.toString() ?? "", txResponse.nonce);
+      telemetryFunction(eventId, `transaction_succeeded_unstucked_${initial ? "init" : "retry"}_${txResponse.hash}`, this.chainId ?? 0, txResponse.to?.toString() ?? "", txResponse.nonce);
     }
     if (txResponse.maxFeePerGas) {
       this.logger.info("chainManager unstuck transaction", {txType: initial ? "init" : "retry", nonce: txResponse.nonce, fee: txResponse.maxFeePerGas, data: txResponse.data});
