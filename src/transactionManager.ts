@@ -72,6 +72,16 @@ export class TransactionManager {
     return new TransactionManager(config as TransactionManagerConfig);
   }
 
+  public async getNonce(chain?: string): Promise<number> {
+    let chainManager = this.getChainManager(chain);
+    return chainManager.readNonce();
+  }
+
+  public forceNonceSync(chain?: string): void {
+    let chainManager = this.getChainManager(chain);
+    chainManager.forceNonceSync();
+  }
+
   /**
    * Prepares and signs a transaction.
    */

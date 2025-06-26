@@ -490,6 +490,14 @@ export class ChainManager {
     }
   }
 
+  public readNonce(): number {
+    return this.nonce ?? 0;
+  }
+
+  public forceNonceSync(): void {
+    this.nonce = null;
+  }
+
   private reportTimeoutError(telemetryFunctionCaller: TxTelemetryFunction, eventId: number, attempt: number, tx: Partial<TransactionRequest>): void {
     telemetryFunctionCaller(eventId, `transaction_error_timed_out_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
     this.logger.warn("Transaction was not stuck in mempool, but timed out with no response", {chainId: this.chainId, nonce: tx.nonce});
@@ -581,7 +589,7 @@ export class ChainManager {
       while (maxRetryAttempts === undefined || attempt <= maxRetryAttempts + 1) {
           try {
               const status = attempt > 1 ? `transaction_being_sent_retry_${attempt}` : `transaction_being_sent`;
-              telemetryFunctionCaller(eventId, status, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
+              telemetryFunctionCaller(eventId, status, this.chainId ?? 0, tx.to?.toString() ?? "", this.nonce ?? 0);
               if (attempt > 1) {
                   // will be skipped if it is the very first attempt
                   // Prepare for retry attempts
@@ -660,6 +668,7 @@ export class ChainManager {
               telemetryFunctionCaller(eventId, `transaction_error_nonce_too_low_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
               // Check if error indicates nonce too low, force nonce sync by setting nonce to null
               this.logger.warn("Nonce too low detected, forcing nonce sync...", {chainId: this.chainId, nonce: tx.nonce});
+              this.nonce = null; // Force nonce sync
               tx.nonce = undefined;
               nonceForThisTransaction = null;
             } else if (isNetworkError(error)) {
