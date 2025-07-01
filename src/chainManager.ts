@@ -98,6 +98,7 @@ export class ChainManager {
     this.maxTxsAtOnce = maxTxsAtOnce;
     this.txGasLimit = txGasLimit;
     this.activeTxsCounter = 0;
+    this.logger.info("ChainManager initialized", {chainId: this.chainId, maxTxsAtOnce: this.maxTxsAtOnce, address: this.wallet.address});
   }
 
   public isReady(): boolean {
