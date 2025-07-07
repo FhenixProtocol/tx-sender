@@ -69,9 +69,7 @@ enum TransactionStatus {
 export class ChainManager {
   private provider: JsonRpcProvider;
   private wallet: Wallet;
-  private nonce: number | null = null;
-  private latestNonce: number | null = null;
-  private nonceSyncing: Promise<number> | null = null;
+  private nonce: number | undefined = undefined;
   private broadcast: boolean;
   private chainId: number | undefined = undefined;
   private balance: bigint = BigInt(0);
@@ -128,8 +126,9 @@ export class ChainManager {
   }
   
   private async handleStuckTransactions(): Promise<void> {
-    this.logger.info("Handling stuck transactions", {chainId: this.chainId, latestNonce: this.latestNonce, nonce: this.nonce});
-    if (this.latestNonce !== null && this.nonce !== null && this.latestNonce < this.nonce) {
+    const latestNonce = await this.provider.getTransactionCount(this.wallet.address, "latest");
+    this.logger.info("Handling stuck transactions", {chainId: this.chainId, latestNonce: latestNonce, nonce: this.nonce});
+    if (this.nonce !== undefined && latestNonce < this.nonce) {
       this.logger.warn("There are pending transactions, this could cause issues with the nonce sync, we'll treat them as stuck");
       
       // Create dummy transaction
@@ -137,7 +136,7 @@ export class ChainManager {
         to: this.wallet.address,
         value: parseEther("0"),
       };
-      for (let i = this.latestNonce; i < this.nonce; i++) {
+      for (let i = latestNonce; i < this.nonce; i++) {
         // set the nonce
         dummyTx.nonce = i;
         
@@ -155,7 +154,7 @@ export class ChainManager {
       }
     }
 
-    if (this.nonce !== null && this.latestNonce !== null && this.nonce !== this.latestNonce) {
+    if (this.nonce !== undefined && this.nonce !== latestNonce) {
       throw new Error("Nonce is not synced, this could cause issues with the nonce sync, failed to release stuck transactions");
     }
 
@@ -185,45 +184,27 @@ export class ChainManager {
    * Initializes the Nonce according to the chain state.
    */
   private async syncNonce(): Promise<void> {
-    if (this.nonce === null || this.nonce === undefined) {
-      this.nonceSyncing = this.provider.getTransactionCount(this.wallet.address, "pending");
-      this.nonce = await this.nonceSyncing;
-      this.latestNonce = await this.provider.getTransactionCount(this.wallet.address, "latest");
-
-      this.logger.info("chainManager nonce synced", {chainId: this.chainId, nonce: this.nonce, latestNonce: this.latestNonce});
+    if (this.nonce !== undefined) {
+      // Nothing to sync here
+      return;
     }
+
+    this.nonce = await this.provider.getTransactionCount(this.wallet.address, "pending");
+
+    this.logger.info("chainManager nonce synced", {chainId: this.chainId, nonce: this.nonce});
   }
 
   /**
    * Initializes and tracks the nonce for the account.
    */
   private async getNonce(): Promise<number> {
-    if (this.nonce === null && this.nonceSyncing !== null) {
-      this.nonce = await this.nonceSyncing;
-    } else if (this.nonce === null) {
-      await this.syncNonce();
+    if (this.nonce !== undefined) {
+      return this.nonce;
     }
-    return this.nonce!;
-  }
 
-  /**
-   * Increments the nonce after a transaction.
-   */
-  private incrementNonce(): void {
-    if (this.nonce !== null) {
-      this.nonce += 1;
-    } else if (this.nonceSyncing === null) {
-      this.logger.warn("nonce expected to be syncing");
-    } else {
-      this.nonceSyncing.then(n => {
-        if (this.nonce === null) {
-          this.logger.warn("nonce not expected to be null");
-          this.nonce = n;
-        } else {
-          this.nonce += 1;
-        }
-      });
-    }
+    // If we have no nonce, we need to sync from scratch 
+    await this.syncNonce();
+    return this.nonce!;
   }
 
   /**
@@ -236,11 +217,14 @@ export class ChainManager {
 
     // Only set nonce if not provided by user
     if (tx.nonce === undefined) {
-        await this.getNonce();
-        tx.nonce = this.nonce;
+        tx.nonce = await this.getNonce();
 
-        // increment nonce
-        this.incrementNonce();
+        if (this.nonce === undefined) {
+          this.logger.error("Nonce is undefined after syncing, this should not happen");
+          throw new Error("Nonce is undefined after syncing, this should not happen");
+        }
+
+        this.nonce += 1;
     }
 
     // Sign the transaction
@@ -496,7 +480,7 @@ export class ChainManager {
   }
 
   public forceNonceSync(): void {
-    this.nonce = null;
+    this.nonce = undefined;
   }
 
   private reportTimeoutError(telemetryFunctionCaller: TxTelemetryFunction, eventId: number, attempt: number, tx: Partial<TransactionRequest>): void {
@@ -669,8 +653,8 @@ export class ChainManager {
               telemetryFunctionCaller(eventId, `transaction_error_nonce_too_low_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
               // Check if error indicates nonce too low, force nonce sync by setting nonce to null
               this.logger.warn("Nonce too low detected, forcing nonce sync...", {chainId: this.chainId, nonce: tx.nonce});
-              this.nonce = null; // Force nonce sync
-              tx.nonce = undefined;
+              this.nonce = undefined; // Force nonce sync
+              tx.nonce = undefined; // Ignore user defined nonce
               nonceForThisTransaction = null;
             } else if (isNetworkError(error)) {
               telemetryFunctionCaller(eventId, `transaction_error_network_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
