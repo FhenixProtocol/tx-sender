@@ -558,6 +558,7 @@ export class ChainManager {
     let currentResult: { signedTx: string; txResponse?: TransactionResponse } | null = null;
     let isUserProvidedNonce = false;
     let prevFee: FeeData = { maxFeePerGas: undefined, maxPriorityFeePerGas: undefined, gasPrice: undefined};
+    let hasBeenStuckInMempool = false;
     
     // If the nonce is provided by the user, use it
     if (tx.nonce !== undefined) {
@@ -629,6 +630,7 @@ export class ChainManager {
           } catch (e) {
             lastError = e as Error;
 
+            let shouldResetStuckInMempoolIndicator = true;
             // When broadcasting we are getting more than one error message, we should only take the first one
             let getSingleErrMessage = (message: string) => {
               return message.substring(0, message.indexOf('}') + 1);
@@ -657,6 +659,8 @@ export class ChainManager {
                   this.logger.warn("Transaction stuck in mempool, retrying with higher fee...", {chainId: this.chainId, nonce: tx.nonce});
                   dynamicFeeIncreaseFactor = feeIncreaseFactor;
                   dynamicRetryDelay = retryDelay;
+                  hasBeenStuckInMempool = true;
+                  shouldResetStuckInMempoolIndicator = false;
                 } else if (txStatus === TransactionStatus.SUCCEEDED) {
                   // The transactin was managed to be sent, even though it was timed out, 
                   // Since we verified that the transaction was sent with the current result, we can return it
@@ -685,7 +689,12 @@ export class ChainManager {
               telemetryFunctionCaller(eventId, `transaction_error_replacement_fee_issue_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               // This case shouldn't happen, but if it does, we should log it
               this.logger.error("Replacement fee issue detected ", {chainId: this.chainId, error: e, nonce: tx.nonce, maxFeePerGas: tx.maxFeePerGas, priorityFee: tx.maxPriorityFeePerGas});
-              dynamicRetryDelay = 2 * retryDelayOnNetworkIssues;
+              if (!hasBeenStuckInMempool) {
+                dynamicRetryDelay = 2 * retryDelayOnNetworkIssues;
+                tx.nonce = undefined;
+                nonceForThisTransaction = null;
+                this.nonce = undefined;
+              }
             } else if (isNetworkError(errorMessage)) {
               telemetryFunctionCaller(eventId, `transaction_error_network_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               dynamicRetryDelay = retryDelayOnNetworkIssues;
@@ -709,6 +718,10 @@ export class ChainManager {
                 },
                 nonce: tx.nonce
               });
+            }
+
+            if (shouldResetStuckInMempoolIndicator) {
+              hasBeenStuckInMempool = false;
             }
             
             // If we've exhausted our attempts, throw the last error, this should be handled by the requester
