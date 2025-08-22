@@ -11,10 +11,18 @@ const BLOCK_TIME = 13000; // 13 seconds, typical Ethereum block time is 12-13 se
  * @param txTo - Destination address of the transaction
  * @param nonce - Transaction nonce value
  */
-export type TxTelemetryFunction = (id: number, status: string, chainId: number, txTo: string, nonce: number) => void;
+export type TxTelemetryFunction = (id: number, status: string, chainId: number, txTo: string, nonce: number, extraInfo: string) => void;
 
-function verifyNonceTooLow(error: unknown, tx: Partial<TransactionRequest>): boolean {
+function verifyNonceTooLow(error: unknown): boolean {
     return (error instanceof Error && (error.message.includes("nonce too low") || error.message.includes("NONCE_EXPIRED")));
+}
+
+function verifyNonceTooHigh(error: unknown): boolean {
+  return (error instanceof Error && (error.message.includes("nonce too high")));
+}
+
+function verifyReplacementFeeIssue(error: unknown): boolean {
+  return (error instanceof Error && (error.message.includes("replacement fee too low")));
 }
 
 function isNetworkError(error: unknown): boolean {
@@ -163,7 +171,7 @@ export class ChainManager {
 
   private logSuccessUnstuckedTx(txResponse: TransactionResponse, initial: boolean = false, eventId: number = 0, telemetryFunction: TxTelemetryFunction | null = null): void {
     if (telemetryFunction) {
-      telemetryFunction(eventId, `transaction_succeeded_unstucked_${initial ? "init" : "retry"}_${txResponse.hash}`, this.chainId ?? 0, txResponse.to?.toString() ?? "", txResponse.nonce);
+      telemetryFunction(eventId, `transaction_succeeded_unstucked_${initial ? "init" : "retry"}_${txResponse.hash}`, this.chainId ?? 0, txResponse.to?.toString() ?? "", txResponse.nonce, "");
     }
     if (txResponse.maxFeePerGas) {
       this.logger.info("chainManager unstuck transaction", {txType: initial ? "init" : "retry", nonce: txResponse.nonce, fee: txResponse.maxFeePerGas, data: txResponse.data});
@@ -484,7 +492,7 @@ export class ChainManager {
   }
 
   private reportTimeoutError(telemetryFunctionCaller: TxTelemetryFunction, eventId: number, attempt: number, tx: Partial<TransactionRequest>): void {
-    telemetryFunctionCaller(eventId, `transaction_error_timed_out_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
+    telemetryFunctionCaller(eventId, `transaction_error_timed_out_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, "");
     this.logger.warn("Transaction was not stuck in mempool, but timed out with no response", {chainId: this.chainId, nonce: tx.nonce});
   }
 
@@ -563,9 +571,9 @@ export class ChainManager {
       await new Promise(resolve => setTimeout(resolve, 0));
     }
 
-    const telemetryFunctionCaller = (id: number, status: string, chainId: number, txTo: string, nonce: number) => {
+    const telemetryFunctionCaller = (id: number, status: string, chainId: number, txTo: string, nonce: number, extraInfo: string) => {
       if (telemetryFunction && id !== 0) {
-        telemetryFunction(id, status, chainId, txTo, nonce);
+        telemetryFunction(id, status, chainId, txTo, nonce, extraInfo);
       }
     }
     
@@ -574,7 +582,7 @@ export class ChainManager {
       while (maxRetryAttempts === undefined || attempt <= maxRetryAttempts + 1) {
           try {
               const status = attempt > 1 ? `transaction_being_sent_retry_${attempt}` : `transaction_being_sent`;
-              telemetryFunctionCaller(eventId, status, this.chainId ?? 0, tx.to?.toString() ?? "", this.nonce ?? 0);
+              telemetryFunctionCaller(eventId, status, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, "");
               if (attempt > 1) {
                   // will be skipped if it is the very first attempt
                   // Prepare for retry attempts
@@ -609,18 +617,19 @@ export class ChainManager {
               if (attempt > 1) {
                 this.logSuccessUnstuckedTx(currentResult.txResponse, false, eventId, telemetryFunction);
               } else {
-                telemetryFunctionCaller(eventId, `transaction_succeeded_${attempt}_${currentResult.txResponse.hash}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
+                telemetryFunctionCaller(eventId, `transaction_succeeded_${attempt}_${currentResult.txResponse.hash}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, "");
               }
               return currentResult as { signedTx: string; txResponse: TransactionResponse };
           } catch (error) {
             lastError = error as Error;
+            let errorMessage = error instanceof Error ? error.message : String(error);
 
             dynamicRetryDelay = retryDelay;
             dynamicFeeIncreaseFactor = 1;
             prevFee.lastErrorIsTimeout = false;
             if (this.shouldSkipError(error)) {
               const currResultInfo = currentResult?.txResponse ? `_${sha256(currentResult.txResponse.data)}` : "none";
-              telemetryFunctionCaller(eventId, `transaction_error_skipped_${attempt}_${currResultInfo}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
+              telemetryFunctionCaller(eventId, `transaction_error_skipped_${attempt}_${currResultInfo}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               // For now we just collect telemetry, as soon as we are certain we should skip, we will
             }
 
@@ -632,7 +641,7 @@ export class ChainManager {
               if (currentResult && currentResult.txResponse) {
                 const txStatus = await this.checkTransactionStatus(currentResult.txResponse);
                 if (txStatus === TransactionStatus.STUCK_IN_MEMPOOL) {
-                  telemetryFunctionCaller(eventId, `transaction_error_stuck_in_mempool_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
+                  telemetryFunctionCaller(eventId, `transaction_error_stuck_in_mempool_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
                   this.logger.warn("Transaction stuck in mempool, retrying with higher fee...", {chainId: this.chainId, nonce: tx.nonce});
                   dynamicFeeIncreaseFactor = feeIncreaseFactor;
                   dynamicRetryDelay = retryDelay;
@@ -649,27 +658,35 @@ export class ChainManager {
               } else {
                 this.reportTimeoutError(telemetryFunctionCaller, eventId, attempt, tx);
               }
-            } else if (verifyNonceTooLow(error, tx)) {
-              telemetryFunctionCaller(eventId, `transaction_error_nonce_too_low_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
+            } else if (verifyNonceTooLow(error)) {
+              telemetryFunctionCaller(eventId, `transaction_error_nonce_too_low_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               // Check if error indicates nonce too low, force nonce sync by setting nonce to null
               this.logger.warn("Nonce too low detected, forcing nonce sync...", {chainId: this.chainId, nonce: tx.nonce});
               this.nonce = undefined; // Force nonce sync
               tx.nonce = undefined; // Ignore user defined nonce
               nonceForThisTransaction = null;
-            } else if (isNetworkError(error)) {
-              telemetryFunctionCaller(eventId, `transaction_error_network_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
+            } else if (verifyNonceTooHigh(error)) {
+              telemetryFunctionCaller(eventId, `transaction_error_nonce_too_high_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
+              this.logger.warn("Nonce too high detected, waiting longer before retry...", {chainId: this.chainId, error, nonce: tx.nonce});
+              dynamicRetryDelay = 2 * retryDelayOnNetworkIssues;
+            } else if (verifyReplacementFeeIssue(error)) {
+              telemetryFunctionCaller(eventId, `transaction_error_replacement_fee_issue_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
+              // This case shouldn't happen, but if it does, we should log it
+              this.logger.error("Replacement fee issue detected ", {chainId: this.chainId, error, nonce: tx.nonce, maxFeePerGas: tx.maxFeePerGas, priorityFee: tx.maxPriorityFeePerGas});
+            }else if (isNetworkError(error)) {
+              telemetryFunctionCaller(eventId, `transaction_error_network_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               dynamicRetryDelay = retryDelayOnNetworkIssues;
               // Handle network errors by waiting longer before retrying
               this.logger.warn("Network error detected, waiting longer before retry...", {chainId: this.chainId, error, nonce: tx.nonce});
             } else {
-              telemetryFunctionCaller(eventId, `transaction_error_unknown_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0);
+              telemetryFunctionCaller(eventId, `transaction_error_unknown_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               dynamicRetryDelay = retryDelayOnNetworkIssues;
               // Log stack trace for null/undefined errors to help with debugging
               if (error instanceof TypeError) {
                 this.logger.debug("Stack trace for code error:", {error: error.stack});
               }
 
-              this.logger.warn("Error detected, incrementing attempt counter", {
+              this.logger.warn("", {
                 chainId: this.chainId, 
                 error: {
                   message: error instanceof Error ? error.message : String(error),
