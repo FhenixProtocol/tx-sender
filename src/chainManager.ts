@@ -564,17 +564,20 @@ export class ChainManager {
       nonceForThisTransaction = tx.nonce;
       isUserProvidedNonce = true;
     }
-
-    // We won't continue if we already have reached the max active transactions at once
-    while (this.activeTxsCounter > this.maxTxsAtOnce) {
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
-
     const telemetryFunctionCaller = (id: number, status: string, chainId: number, txTo: string, nonce: number, extraInfo: string) => {
       if (telemetryFunction && id !== 0) {
         telemetryFunction(id, status, chainId, txTo, nonce, extraInfo);
       }
     }
+
+
+    telemetryFunctionCaller(eventId, `waiting_for_tx_limit_to_be_released`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, "");
+    // We won't continue if we already have reached the max active transactions at once
+    while (this.activeTxsCounter > this.maxTxsAtOnce) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    telemetryFunctionCaller(eventId, `tx_limit_was_released`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, "");
+
     
     try {
       this.activeTxsCounter += 1;
