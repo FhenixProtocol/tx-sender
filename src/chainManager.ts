@@ -419,7 +419,7 @@ export class ChainManager {
    * Broadcasts a signed transaction to the network.
    */
    public async broadcastTransaction(signedTx: string): Promise<TransactionResponse> {
-     return this.provider.broadcastTransaction(signedTx);
+     return this.provider.send("eth_sendRawTransaction", [signedTx]);
    }
 
   /**
@@ -468,8 +468,8 @@ export class ChainManager {
       }
   };
 
-  private isTimeoutError(lastError: Error): boolean {
-    return (lastError instanceof Error && (lastError.message.toLowerCase().includes("timeout") || lastError.message.toLowerCase().includes("timed out")))
+  private isTimeoutError(lastError: string): boolean {
+    return (lastError.includes("timeout") || lastError.includes("timed out"))
   }  
 
   private shouldSkipError(error: unknown): boolean {
@@ -620,20 +620,26 @@ export class ChainManager {
                 telemetryFunctionCaller(eventId, `transaction_succeeded_${attempt}_${currentResult.txResponse.hash}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, "");
               }
               return currentResult as { signedTx: string; txResponse: TransactionResponse };
-          } catch (error) {
-            lastError = error as Error;
-            let errorMessage = error instanceof Error ? error.message : String(error);
+          } catch (e) {
+            lastError = e as Error;
+
+            // When broadcasting we are getting more than one error message, we should only take the first one
+            let getSingleErrMessage = (message: string) => {
+              return message.substring(0, message.indexOf('}') + 1);
+            }
+
+            let errorMessage = e instanceof Error ? getSingleErrMessage(e.message): String(e);
 
             dynamicRetryDelay = retryDelay;
             dynamicFeeIncreaseFactor = 1;
             prevFee.lastErrorIsTimeout = false;
-            if (this.shouldSkipError(error)) {
+            if (this.shouldSkipError(errorMessage)) {
               const currResultInfo = currentResult?.txResponse ? `_${sha256(currentResult.txResponse.data)}` : "none";
               telemetryFunctionCaller(eventId, `transaction_error_skipped_${attempt}_${currResultInfo}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               // For now we just collect telemetry, as soon as we are certain we should skip, we will
             }
 
-            if (this.isTimeoutError(lastError)) {
+            if (this.isTimeoutError(errorMessage)) {
               dynamicRetryDelay = retryDelayOnNetworkIssues;
               // Check if transaction is stuck in mempool
               this.logger.debug("Timeout error detected, checking if transaction might be stuck in mempool");
@@ -658,41 +664,41 @@ export class ChainManager {
               } else {
                 this.reportTimeoutError(telemetryFunctionCaller, eventId, attempt, tx);
               }
-            } else if (verifyNonceTooLow(error)) {
+            } else if (verifyNonceTooLow(errorMessage)) {
               telemetryFunctionCaller(eventId, `transaction_error_nonce_too_low_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               // Check if error indicates nonce too low, force nonce sync by setting nonce to null
               this.logger.warn("Nonce too low detected, forcing nonce sync...", {chainId: this.chainId, nonce: tx.nonce});
               this.nonce = undefined; // Force nonce sync
               tx.nonce = undefined; // Ignore user defined nonce
               nonceForThisTransaction = null;
-            } else if (verifyNonceTooHigh(error)) {
+            } else if (verifyNonceTooHigh(errorMessage)) {
               telemetryFunctionCaller(eventId, `transaction_error_nonce_too_high_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
-              this.logger.warn("Nonce too high detected, waiting longer before retry...", {chainId: this.chainId, error, nonce: tx.nonce});
+              this.logger.warn("Nonce too high detected, waiting longer before retry...", {chainId: this.chainId, error: e, nonce: tx.nonce});
               dynamicRetryDelay = 2 * retryDelayOnNetworkIssues;
-            } else if (verifyReplacementFeeIssue(error)) {
+            } else if (verifyReplacementFeeIssue(errorMessage)) {
               telemetryFunctionCaller(eventId, `transaction_error_replacement_fee_issue_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               // This case shouldn't happen, but if it does, we should log it
-              this.logger.error("Replacement fee issue detected ", {chainId: this.chainId, error, nonce: tx.nonce, maxFeePerGas: tx.maxFeePerGas, priorityFee: tx.maxPriorityFeePerGas});
-            }else if (isNetworkError(error)) {
+              this.logger.error("Replacement fee issue detected ", {chainId: this.chainId, error: e, nonce: tx.nonce, maxFeePerGas: tx.maxFeePerGas, priorityFee: tx.maxPriorityFeePerGas});
+            }else if (isNetworkError(errorMessage)) {
               telemetryFunctionCaller(eventId, `transaction_error_network_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               dynamicRetryDelay = retryDelayOnNetworkIssues;
               // Handle network errors by waiting longer before retrying
-              this.logger.warn("Network error detected, waiting longer before retry...", {chainId: this.chainId, error, nonce: tx.nonce});
+              this.logger.warn("Network error detected, waiting longer before retry...", {chainId: this.chainId, error: e, nonce: tx.nonce});
             } else {
               telemetryFunctionCaller(eventId, `transaction_error_unknown_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               dynamicRetryDelay = retryDelayOnNetworkIssues;
               // Log stack trace for null/undefined errors to help with debugging
-              if (error instanceof TypeError) {
-                this.logger.debug("Stack trace for code error:", {error: error.stack});
+              if (e instanceof TypeError) {
+                this.logger.debug("Stack trace for code error:", {error: e.stack});
               }
 
               this.logger.warn("", {
                 chainId: this.chainId, 
                 error: {
-                  message: error instanceof Error ? error.message : String(error),
-                  stack: error instanceof Error ? error.stack : undefined,
-                  name: error instanceof Error ? error.name : undefined,
-                  code: error instanceof Error ? (error as any).code : undefined
+                  message: e instanceof Error ? e.message : String(e),
+                  stack: e instanceof Error ? e.stack : undefined,
+                  name: e instanceof Error ? e.name : undefined,
+                  code: e instanceof Error ? (e as any).code : undefined
                 },
                 nonce: tx.nonce
               });
