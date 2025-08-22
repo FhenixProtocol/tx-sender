@@ -418,7 +418,7 @@ export class ChainManager {
    * Broadcasts a signed transaction to the network.
    */
    public async broadcastTransaction(signedTx: string): Promise<TransactionResponse> {
-     return this.provider.send("eth_sendRawTransaction", [signedTx]);
+     return this.provider.broadcastTransaction(signedTx);
    }
 
   /**
@@ -490,9 +490,9 @@ export class ChainManager {
     this.nonce = undefined;
   }
 
-  private reportTimeoutError(telemetryFunctionCaller: TxTelemetryFunction, eventId: number, attempt: number, tx: Partial<TransactionRequest>): void {
-    telemetryFunctionCaller(eventId, `transaction_error_timed_out_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, "");
-    this.logger.warn("Transaction was not stuck in mempool, but timed out with no response", {chainId: this.chainId, nonce: tx.nonce});
+  private reportTimeoutError(telemetryFunctionCaller: TxTelemetryFunction, eventId: number, attempt: number, tx: Partial<TransactionRequest>, errorMessage: string): void {
+    telemetryFunctionCaller(eventId, `transaction_error_timed_out_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
+    this.logger.warn("Transaction was not stuck in mempool, but timed out with no response", {chainId: this.chainId, nonce: tx.nonce, errorMessage: errorMessage});
   }
 
   /**
@@ -606,8 +606,8 @@ export class ChainManager {
               // Send the transaction, writing the transaction to the mempool
               currentResult = await this._sendTransaction(tx, prevFee);
 
-              if (!currentResult.txResponse) {
-                  throw new Error("Transaction was not broadcast");
+              if (currentResult.txResponse === undefined) {
+                  throw new Error("Transaction was not broadcasted");
               }
 
               // Update nonce for this transaction
@@ -662,10 +662,10 @@ export class ChainManager {
                   this.logSuccessUnstuckedTx(currentResult.txResponse, false,eventId, telemetryFunction);
                   return currentResult as { signedTx: string; txResponse: TransactionResponse };
                 } else {
-                  this.reportTimeoutError(telemetryFunctionCaller, eventId, attempt, tx);
+                  this.reportTimeoutError(telemetryFunctionCaller, eventId, attempt, tx, errorMessage);
                 }
               } else {
-                this.reportTimeoutError(telemetryFunctionCaller, eventId, attempt, tx);
+                this.reportTimeoutError(telemetryFunctionCaller, eventId, attempt, tx, errorMessage);
               }
             } else if (verifyNonceTooLow(errorMessage)) {
               telemetryFunctionCaller(eventId, `transaction_error_nonce_too_low_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
@@ -682,7 +682,7 @@ export class ChainManager {
               telemetryFunctionCaller(eventId, `transaction_error_replacement_fee_issue_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               // This case shouldn't happen, but if it does, we should log it
               this.logger.error("Replacement fee issue detected ", {chainId: this.chainId, error: e, nonce: tx.nonce, maxFeePerGas: tx.maxFeePerGas, priorityFee: tx.maxPriorityFeePerGas});
-            }else if (isNetworkError(errorMessage)) {
+            } else if (isNetworkError(errorMessage)) {
               telemetryFunctionCaller(eventId, `transaction_error_network_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               dynamicRetryDelay = retryDelayOnNetworkIssues;
               // Handle network errors by waiting longer before retrying
