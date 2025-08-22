@@ -1,4 +1,4 @@
-import { Wallet, JsonRpcProvider, TransactionRequest, TransactionResponse, sha256 } from "ethers";
+import { Wallet, JsonRpcProvider, TransactionRequest, TransactionResponse, sha256, ethers } from "ethers";
 import { parseEther, getBigInt } from "ethers";
 import { Logger } from "winston";
 const BLOCK_TIME = 13000; // 13 seconds, typical Ethereum block time is 12-13 seconds
@@ -22,7 +22,7 @@ function verifyNonceTooHigh(errorMessage: string): boolean {
 }
 
 function verifyReplacementFeeIssue(errorMessage: string): boolean {
-  return errorMessage.includes("replacement fee too low");
+  return errorMessage.includes("replacement fee too low") || errorMessage.includes("future transaction tries to replace pending");
 }
 
 function isNetworkError(errorMessage: string): boolean {
@@ -93,7 +93,9 @@ export class ChainManager {
     if (!privateKey || !rpcUrl) {
       throw new Error("Private key and RPC URL are required.");
     }
-    this.provider = new JsonRpcProvider(rpcUrl, chainId);
+    
+    // staticNetwork - do not request chain ID on requests to validate the underlying chain has not changed
+    this.provider = new JsonRpcProvider(rpcUrl, chainId, { staticNetwork: ethers.Network.from(chainId) });
     this.wallet = new Wallet(privateKey, this.provider);
     this.broadcast = broadcast;
     this.chainId = chainId;
