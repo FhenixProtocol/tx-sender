@@ -93,6 +93,8 @@ export class ChainManager {
     if (!privateKey || !rpcUrl) {
       throw new Error("Private key and RPC URL are required.");
     }
+    
+    // staticNetwork - do not request chain ID on requests to validate the underlying chain has not changed
     this.provider = new JsonRpcProvider(rpcUrl, chainId, { staticNetwork: ethers.Network.from(chainId) });
     this.wallet = new Wallet(privateKey, this.provider);
     this.broadcast = broadcast;
