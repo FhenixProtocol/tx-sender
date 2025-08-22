@@ -13,21 +13,20 @@ const BLOCK_TIME = 13000; // 13 seconds, typical Ethereum block time is 12-13 se
  */
 export type TxTelemetryFunction = (id: number, status: string, chainId: number, txTo: string, nonce: number, extraInfo: string) => void;
 
-function verifyNonceTooLow(error: unknown): boolean {
-    return (error instanceof Error && (error.message.includes("nonce too low") || error.message.includes("NONCE_EXPIRED")));
+function verifyNonceTooLow(errorMessage: string): boolean {
+    return errorMessage.includes("nonce too low") || errorMessage.includes("NONCE_EXPIRED");
 }
 
-function verifyNonceTooHigh(error: unknown): boolean {
-  return (error instanceof Error && (error.message.includes("nonce too high")));
+function verifyNonceTooHigh(errorMessage: string): boolean {
+  return errorMessage.includes("nonce too high");
 }
 
-function verifyReplacementFeeIssue(error: unknown): boolean {
-  return (error instanceof Error && (error.message.includes("replacement fee too low")));
+function verifyReplacementFeeIssue(errorMessage: string): boolean {
+  return errorMessage.includes("replacement fee too low");
 }
 
-function isNetworkError(error: unknown): boolean {
-    return error instanceof Error && 
-        (error.message.includes("network") || error.message.includes("connection"));
+function isNetworkError(errorMessage: string): boolean {
+    return errorMessage.includes("network") || errorMessage.includes("connection");
 }
 
   //Block tags:
@@ -581,8 +580,8 @@ export class ChainManager {
       this.activeTxsCounter += 1;
       while (maxRetryAttempts === undefined || attempt <= maxRetryAttempts + 1) {
           try {
-              const status = attempt > 1 ? `transaction_being_sent_retry_${attempt}` : `transaction_being_sent`;
-              telemetryFunctionCaller(eventId, status, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, "");
+              const prepareStatus = attempt > 1 ? `transaction_being_prepared_retry_${attempt}` : `transaction_being_prepared`;
+              telemetryFunctionCaller(eventId, prepareStatus, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, "");
               if (attempt > 1) {
                   // will be skipped if it is the very first attempt
                   // Prepare for retry attempts
@@ -599,6 +598,10 @@ export class ChainManager {
 
                   tx = await this.prepareForRetry(tx, backoffDelay, dynamicFeeIncreaseFactor, config.maxGasPrice, attempt - 1, prevFee);
               }
+              
+
+              const sendStatus = attempt > 1 ? `transaction_being_sent_retry_${attempt}` : `transaction_being_sent`;
+              telemetryFunctionCaller(eventId, sendStatus, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, "");
               
               // Send the transaction, writing the transaction to the mempool
               currentResult = await this._sendTransaction(tx, prevFee);
