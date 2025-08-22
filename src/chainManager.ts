@@ -84,11 +84,11 @@ export class ChainManager {
   private minPriorityFee: number = 2_000_000_000;
   private ready: boolean = false;
   private logger: Logger;
-  private maxTxsAtOnce: number = 50;
+  private maxTxsAtOnce: number = 20;
   private txGasLimit: number = 5_000_000;
   private activeTxsCounter: number = 0;
   constructor(config: ChainManagerConfig, logger: Logger) {
-    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = 1.1, maxTxsAtOnce = 50, minPriorityFee = 2_000_000_000, txGasLimit = 5_000_000} = config;
+    const { privateKey, rpcUrl, chainId, broadcast = false, feeMultiplier = 1.1, maxTxsAtOnce = 20, minPriorityFee = 2_000_000_000, txGasLimit = 5_000_000} = config;
 
     if (!privateKey || !rpcUrl) {
       throw new Error("Private key and RPC URL are required.");
@@ -685,6 +685,7 @@ export class ChainManager {
               telemetryFunctionCaller(eventId, `transaction_error_replacement_fee_issue_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               // This case shouldn't happen, but if it does, we should log it
               this.logger.error("Replacement fee issue detected ", {chainId: this.chainId, error: e, nonce: tx.nonce, maxFeePerGas: tx.maxFeePerGas, priorityFee: tx.maxPriorityFeePerGas});
+              dynamicRetryDelay = 2 * retryDelayOnNetworkIssues;
             } else if (isNetworkError(errorMessage)) {
               telemetryFunctionCaller(eventId, `transaction_error_network_${attempt}`, this.chainId ?? 0, tx.to?.toString() ?? "", tx.nonce ?? 0, errorMessage);
               dynamicRetryDelay = retryDelayOnNetworkIssues;
